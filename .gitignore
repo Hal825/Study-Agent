@@ -1,0 +1,65 @@
+# =====================
+# 环境变量 & 密钥（最高优先级，严防死守）
+# =====================
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+credentials.json
+
+# =====================
+# Python 后端 (backend/)
+# =====================
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+alembic/versions/*.pyc
+instance/
+*.db
+
+# =====================
+# Node.js 前端 (frontend/)
+# =====================
+node_modules/
+.npm
+.yarn/
+.yarn-cache
+dist/
+dist-ssr/
+*.local
+.vite/
+*.tsbuildinfo
+
+# =====================
+# IDE / 编辑器（VSCode 个性化配置不提交）
+# =====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# =====================
+# Docker / 系统
+# =====================
+docker-compose.override.yml
+*.pid
+*.seed
+*.pid.lock

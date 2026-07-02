@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # ----- 服务1：PostgreSQL 数据库 -----
+  postgres:
+    image: postgres:15-alpine          # alpine版本极小，约200MB
+    container_name: study-agent-postgres
+    command: -c shared_buffers=128MB -c effective_cache_size=256MB
+    environment:
+      POSTGRES_USER: study
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: study_agent
+    ports:
+      - "5432:5432"                     # 映射到宿主机，后端代码通过 localhost:5432 连接
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # 数据持久化，关容器不丢数据
+    mem_limit: 800m                    # 限制最多占800MB内存
+    restart: unless-stopped
+
+  # ----- 服务2：Redis 缓存 -----
+  redis:
+    image: redis:7-alpine              # alpine版本极小，约30MB
+    container_name: study-agent-redis
+    ports:
+      - "6379:6379"
+    mem_limit: 200m                    # 限制最多占200MB内存
+    restart: unless-stopped
+
+volumes:
+  postgres_data:                        # 声明数据卷，方便备份
