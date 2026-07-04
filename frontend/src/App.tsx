@@ -38,6 +38,9 @@ function App() {
   // Input state
   const [inputValue, setInputValue] = useState('');
 
+  // Streaming state
+  const [isStreaming, setIsStreaming] = useState(false);
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,40 +91,109 @@ function App() {
     });
   }, [currentSessionId]);
 
-  // Send message
-  const sendMessage = useCallback(() => {
-    if (!inputValue.trim() || !currentSessionId) return;
+  // Send message to a specific session (SSE stream from backend)
+  const sendMessageToSession = useCallback(async (sessionId: string, text: string) => {
+    if (!text.trim() || isStreaming) return;
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
       role: 'user',
-      content: inputValue.trim(),
+      content: text,
     };
 
+    // Create a placeholder assistant message
+    const assistantMsgId = `msg-${Date.now()}-ai`;
+    const assistantMessage: Message = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+    };
+
+    // Add both user message and empty assistant message to session
     setSessions(prev => prev.map(s => {
-      if (s.id === currentSessionId) {
-        return { ...s, messages: [...s.messages, userMessage] };
+      if (s.id === sessionId) {
+        return { ...s, messages: [...s.messages, userMessage, assistantMessage] };
       }
       return s;
     }));
 
-    setInputValue('');
+    setIsStreaming(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: `msg-${Date.now()}-ai`,
-        role: 'assistant',
-        content: `收到你的问题："${userMessage.content}"。这是 Study Agent 的模拟回复，实际功能将在后续接入 AI 接口后实现。`,
-      };
+    try {
+      const response = await fetch('/api/v1/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        // Parse SSE lines: "data: {...}\n\n"
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.done) {
+                break;
+              }
+              if (data.content) {
+                accumulated += data.content;
+                setSessions(prev => prev.map(s => {
+                  if (s.id === sessionId) {
+                    return {
+                      ...s,
+                      messages: s.messages.map(m =>
+                        m.id === assistantMsgId ? { ...m, content: accumulated } : m
+                      ),
+                    };
+                  }
+                  return s;
+                }));
+              }
+            } catch {
+              // Skip malformed JSON lines
+            }
+          }
+        }
+      }
+    } catch {
       setSessions(prev => prev.map(s => {
-        if (s.id === currentSessionId) {
-          return { ...s, messages: [...s.messages, aiMessage] };
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            messages: s.messages.map(m =>
+              m.id === assistantMsgId
+                ? { ...m, content: '⚠️ 后端连接失败，请确认后端服务已启动（端口 8000）。' }
+                : m
+            ),
+          };
         }
         return s;
       }));
-    }, 800);
-  }, [inputValue, currentSessionId]);
+    } finally {
+      setIsStreaming(false);
+    }
+  }, [isStreaming]);
+
+  // Send message (uses current session)
+  const sendMessage = useCallback(() => {
+    if (!inputValue.trim() || !currentSessionId) return;
+    const text = inputValue.trim();
+    setInputValue('');
+    sendMessageToSession(currentSessionId, text);
+  }, [inputValue, currentSessionId, sendMessageToSession]);
 
   // Handle input key down
   const handleInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -143,13 +215,26 @@ function App() {
   // Handle input area send (for empty state centered input)
   const handleEmptyStateSend = () => {
     if (!inputValue.trim()) return;
+    const text = inputValue.trim();
+    setInputValue('');
+
     if (!currentSessionId) {
-      // Auto create a session with default subject
-      createSession('语文');
-      // Need to delay to let session be created
-      setTimeout(() => sendMessage(), 50);
+      // Auto create a session with default subject, then send message
+      const subject: Subject = '语文';
+      const subjectCount = sessions.filter(s => s.subject === subject).length + 1;
+      const newSession: Session = {
+        id: `session-${Date.now()}`,
+        name: `${subject} · 会话${subjectCount}`,
+        subject,
+        messages: [],
+        createdAt: Date.now(),
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+      // Send message directly with the new session ID (no timing issue)
+      sendMessageToSession(newSession.id, text);
     } else {
-      sendMessage();
+      sendMessageToSession(currentSessionId, text);
     }
   };
 

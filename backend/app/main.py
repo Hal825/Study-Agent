@@ -41,6 +41,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------- 注册 API 路由 ----------
+from app.api.v1 import router as v1_router
+
+app.include_router(v1_router, prefix="/api")
+
 # ---------- 基础路由 ----------
 @app.get("/")
 def root():
