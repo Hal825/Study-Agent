@@ -2,7 +2,7 @@
 通用专业知识获取工具
 ====================
 工具标识：general_professional_knowledge
-底层 LLM：qwen3.7-max-preview（通过 llm.qwen_client.QwenClient 调用）
+底层 LLM：deepseek-v4-pro（通过 llm.deepseek_client.DeepSeekClient 调用）
 
 定位：纯素材供给工具，不直接回复用户，输出内容仅作为其他业务工具的知识输入源。
 """
@@ -11,8 +11,8 @@ import re
 import logging
 from typing import Literal
 
-from app.llm.qwen_client import QwenClient
-from app.llm.models import QWEN_3_7_MAX_PREVIEW
+from app.llm.deepseek_client import DeepSeekClient
+from app.llm.models import DEEPSEEK_V4_PRO
 from app.prompts.general_professional_knowledge import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 # ---------- 常量 ----------
 VALID_DETAIL_LEVELS = {"simple", "standard", "deep"}
 
-# 本工具使用的 Qwen 模型（从 llm/models.py 统一引用）
-QWEN_MODEL = QWEN_3_7_MAX_PREVIEW
+# 本工具使用的 DeepSeek 模型（从 llm/models.py 统一引用）
+DS_MODEL = DEEPSEEK_V4_PRO
 
 # 固化超参（不可修改）
 LLM_PARAMS = {
     "temperature": 0.1,
     "top_p": 0.8,
-    "max_tokens": 8192,
+    "max_tokens": 32768,
     "presence_penalty": 0.0,
     "frequency_penalty": 0.0,
 }
@@ -146,8 +146,8 @@ async def general_professional_knowledge(
     )
 
     try:
-        qwen = QwenClient(model=QWEN_MODEL)
-        raw_text = await qwen.chat(
+        ds = DeepSeekClient(model=DS_MODEL)
+        raw_text = await ds.chat(
             message=(
                 f"请生成关于「{core_topic}」的专业知识素材，"
                 f"领域：{domain_scope}，深度：{detail_level}。"

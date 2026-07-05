@@ -4,6 +4,11 @@ Chat API 路由
 POST /api/v1/chat/stream  —— 流式对话接口（通过 StudyAgent 编排工具）
 """
 
+import sys
+import json
+import traceback
+import logging
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -11,6 +16,7 @@ from pydantic import BaseModel
 from app.agent import StudyAgent
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ---------- 单例 Agent ----------
 study_agent = StudyAgent()
@@ -31,8 +37,15 @@ async def chat_stream(req: ChatRequest):
     """
 
     async def event_generator():
-        async for chunk in study_agent.run_stream(req.message):
-            yield f"data: {chunk}\n\n"
+        print("[SSE] event_generator started", flush=True, file=sys.stderr)
+        try:
+            async for chunk in study_agent.run_stream(req.message):
+                yield f"data: {chunk}\n\n"
+            print("[SSE] event_generator done", flush=True, file=sys.stderr)
+        except Exception:
+            print("[SSE] event_generator ERROR:", flush=True, file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            yield f"data: {json.dumps({'error': 'internal error', 'done': True})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -43,3 +56,15 @@ async def chat_stream(req: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------- 最简 SSE 测试（验证 SSE 机制是否正常） ----------
+@router.get("/ping-sse")
+async def ping_sse():
+    import asyncio
+    async def gen():
+        for i in range(3):
+            yield f"data: {json.dumps({'ping': i})}\n\n"
+            await asyncio.sleep(0.5)
+        yield f"data: {json.dumps({'done': True})}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")

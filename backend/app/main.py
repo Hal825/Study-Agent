@@ -19,10 +19,10 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时执行（例如：初始化数据库连接池、加载模型等）
-    print("🚀 Study-Agent 后端启动中...")
+    print("Study-Agent backend starting...")
     yield
     # 关闭时执行（例如：释放资源）
-    print("🛑 Study-Agent 后端已关闭")
+    print("Study-Agent backend stopped")
 
 # ---------- 创建 FastAPI 实例 ----------
 app = FastAPI(

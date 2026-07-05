@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from 'react';
+import { MarkdownRenderer } from './components/MarkdownRenderer';
 
 // Types
 interface Message {
@@ -94,7 +95,11 @@ function App() {
 
   // Send message to a specific session (SSE stream from backend)
   const sendMessageToSession = useCallback(async (sessionId: string, text: string, subject?: string) => {
-    if (!text.trim() || isStreaming) return;
+    console.log('[sendMessageToSession] called, text=', text, 'isStreaming=', isStreaming);
+    if (!text.trim() || isStreaming) {
+      console.log('[sendMessageToSession] blocked: empty or already streaming');
+      return;
+    }
 
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
@@ -121,6 +126,7 @@ function App() {
     setIsStreaming(true);
 
     try {
+      console.log('[sendMessageToSession] sending fetch to /api/v1/chat/stream');
       const response = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -190,7 +196,11 @@ function App() {
 
   // Send message (uses current session)
   const sendMessage = useCallback(() => {
-    if (!inputValue.trim() || !currentSessionId) return;
+    console.log('[sendMessage] called, inputValue=', inputValue, 'currentSessionId=', currentSessionId);
+    if (!inputValue.trim() || !currentSessionId) {
+      console.log('[sendMessage] blocked: empty input or no session');
+      return;
+    }
     const text = inputValue.trim();
     setInputValue('');
     sendMessageToSession(currentSessionId, text, currentSession?.subject);
@@ -215,11 +225,16 @@ function App() {
 
   // Handle input area send (for empty state centered input)
   const handleEmptyStateSend = () => {
-    if (!inputValue.trim()) return;
+    console.log('[handleEmptyStateSend] called, inputValue=', inputValue, 'currentSessionId=', currentSessionId);
+    if (!inputValue.trim()) {
+      console.log('[handleEmptyStateSend] blocked: empty input');
+      return;
+    }
     const text = inputValue.trim();
     setInputValue('');
 
     if (!currentSessionId) {
+      console.log('[handleEmptyStateSend] creating new session...');
       // Auto create a session with default subject, then send message
       const subject: Subject = '语文';
       const subjectCount = sessions.filter(s => s.subject === subject).length + 1;
@@ -235,6 +250,7 @@ function App() {
       // Send message directly with the new session ID (no timing issue)
       sendMessageToSession(newSession.id, text, subject);
     } else {
+      console.log('[handleEmptyStateSend] using existing session:', currentSessionId);
       sendMessageToSession(currentSessionId, text, currentSession?.subject);
     }
   };
@@ -568,7 +584,11 @@ function App() {
                         wordBreak: 'break-word',
                       }}
                     >
-                      {msg.content}
+                      {msg.role === 'assistant' ? (
+                        <MarkdownRenderer content={msg.content} />
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </div>
                 ))}

@@ -1,9 +1,10 @@
 """
 简单日志模块
 ============
-仅记录 Agent 调度和工具调用情况，打印到控制台。
+仅记录 Agent 调度和工具调用情况，打印到控制台（stderr，与 uvicorn 日志同流）。
 """
 
+import sys
 import time
 from typing import Optional
 
@@ -19,14 +20,14 @@ class SimpleLogger:
         entry = {
             "type": "agent",
             "event": "start",
-            "message": f"🤖 Agent 开始处理: {user_message[:50]}{'...' if len(user_message) > 50 else ''}",
+            "message": f"[START] Agent processing: {user_message[:50]}{'...' if len(user_message) > 50 else ''}",
             "model": model,
             "timestamp": time.time(),
         }
         self._logs.append(entry)
-        print(f"[Agent] {entry['message']}")
+        print(f"[Agent] {entry['message']}", flush=True, file=sys.stderr)
         if model:
-            print(f"[Agent] 使用模型: {model}")
+            print(f"[Agent] 使用模型: {model}", flush=True, file=sys.stderr)
 
     def log_tool_call(self, tool_name: str, args: dict):
         """记录工具调用"""
@@ -35,15 +36,14 @@ class SimpleLogger:
             "type": "tool",
             "event": "call",
             "tool": tool_name,
-            "message": f"🔧 调用工具: {tool_name}({args_preview})",
+            "message": f"[CALL] Tool: {tool_name}({args_preview})",
             "timestamp": time.time(),
         }
         self._logs.append(entry)
-        print(f"[Tool] {entry['message']}")
+        print(f"[Tool] {entry['message']}", flush=True, file=sys.stderr)
 
     def log_tool_result(self, tool_name: str, result: str, cost_ms: int):
         """记录工具执行结果"""
-        # 截取结果的前 100 字符作为预览
         preview = result[:100].replace("\n", " ")
         if len(result) > 100:
             preview += "..."
@@ -51,35 +51,35 @@ class SimpleLogger:
             "type": "tool",
             "event": "result",
             "tool": tool_name,
-            "message": f"✅ {tool_name} 执行完成 (耗时 {cost_ms}ms): {preview}",
+            "message": f"[OK] {tool_name} done ({cost_ms}ms): {preview}",
             "cost_ms": cost_ms,
             "timestamp": time.time(),
         }
         self._logs.append(entry)
-        print(f"[Tool] {entry['message']}")
+        print(f"[Tool] {entry['message']}", flush=True, file=sys.stderr)
 
     def log_agent_done(self, cost_ms: int, tool_calls_count: int):
         """记录 Agent 完成"""
         entry = {
             "type": "agent",
             "event": "done",
-            "message": f"✅ Agent 处理完成 (总耗时 {cost_ms}ms, 工具调用 {tool_calls_count} 次)",
+            "message": f"[OK] Agent done (total {cost_ms}ms, tool calls: {tool_calls_count})",
             "cost_ms": cost_ms,
             "tool_calls_count": tool_calls_count,
             "timestamp": time.time(),
         }
         self._logs.append(entry)
-        print(f"[Agent] {entry['message']}")
+        print(f"[Agent] {entry['message']}", flush=True, file=sys.stderr)
 
     def log_error(self, message: str):
         """记录错误"""
         entry = {
             "type": "error",
-            "message": f"❌ {message}",
+            "message": f"[ERROR] {message}",
             "timestamp": time.time(),
         }
         self._logs.append(entry)
-        print(f"[Error] {entry['message']}")
+        print(f"[Error] {entry['message']}", flush=True, file=sys.stderr)
 
     def get_logs(self) -> list[dict]:
         """获取所有日志"""

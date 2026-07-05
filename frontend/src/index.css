@@ -77,3 +77,69 @@ body {
 .animate-image-fade {
   animation: fadeIn 0.6s ease;
 }
+
+/* ── Markdown 内容样式 ── */
+.markdown-body h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-h);
+  margin: 1.2em 0 0.6em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.4;
+}
+
+.markdown-body h1:first-child {
+  margin-top: 0;
+}
+
+.markdown-body h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-h);
+  margin: 1em 0 0.5em;
+  line-height: 1.4;
+}
+
+.markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.markdown-body p {
+  margin: 0.5em 0;
+  line-height: 1.7;
+}
+
+.markdown-body p:first-child {
+  margin-top: 0;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+  line-height: 1.7;
+}
+
+.markdown-body li {
+  margin: 0.2em 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.markdown-body em {
+  font-style: italic;
+}
+
+.markdown-body br {
+  display: block;
+  content: '';
+  margin-top: 0.25em;
+}
