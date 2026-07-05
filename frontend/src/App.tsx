@@ -41,6 +41,7 @@ function App() {
   // Streaming state
   const [isStreaming, setIsStreaming] = useState(false);
 
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -92,7 +93,7 @@ function App() {
   }, [currentSessionId]);
 
   // Send message to a specific session (SSE stream from backend)
-  const sendMessageToSession = useCallback(async (sessionId: string, text: string) => {
+  const sendMessageToSession = useCallback(async (sessionId: string, text: string, subject?: string) => {
     if (!text.trim() || isStreaming) return;
 
     const userMessage: Message = {
@@ -123,7 +124,7 @@ function App() {
       const response = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, subject: subject || null }),
       });
 
       if (!response.ok || !response.body) {
@@ -192,8 +193,8 @@ function App() {
     if (!inputValue.trim() || !currentSessionId) return;
     const text = inputValue.trim();
     setInputValue('');
-    sendMessageToSession(currentSessionId, text);
-  }, [inputValue, currentSessionId, sendMessageToSession]);
+    sendMessageToSession(currentSessionId, text, currentSession?.subject);
+  }, [inputValue, currentSessionId, currentSession?.subject, sendMessageToSession]);
 
   // Handle input key down
   const handleInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -232,9 +233,9 @@ function App() {
       setSessions(prev => [newSession, ...prev]);
       setCurrentSessionId(newSession.id);
       // Send message directly with the new session ID (no timing issue)
-      sendMessageToSession(newSession.id, text);
+      sendMessageToSession(newSession.id, text, subject);
     } else {
-      sendMessageToSession(currentSessionId, text);
+      sendMessageToSession(currentSessionId, text, currentSession?.subject);
     }
   };
 
@@ -378,6 +379,7 @@ function App() {
         )}
 
         {sidebarCollapsed && <div className="flex-1" />}
+
 
         {/* Sidebar Footer */}
         <div
@@ -742,6 +744,7 @@ function App() {
           </div>
         </>
       )}
+
     </div>
   );
 }
