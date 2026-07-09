@@ -1,145 +1,31 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --accent: #4F6EF7;
-  --accent-bg: rgba(79, 110, 247, 0.1);
-  --accent-border: rgba(79, 110, 247, 0.3);
-  --text-h: #1A1A2E;
-  --text-m: #4A4A6A;
-  --text-light: #8A8AA8;
-  --border: #E8E8F0;
-  --bg-card: #F8F8FC;
-  --social-bg: #F0F0F5;
-  --shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-}
-
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: var(--text-m);
-  background: #ffffff;
-}
-
-#root {
-  width: 100%;
-  height: 100vh;
-  overflow: hidden;
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-light);
-}
-
-/* Animations */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes scaleUp {
-  from { 
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.9);
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   }
-  to { 
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+
+  ::selection {
+    @apply bg-primary-200 text-primary-900;
   }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.25s ease;
-}
-
-.animate-scale-up {
-  animation: scaleUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.animate-image-fade {
-  animation: fadeIn 0.6s ease;
-}
-
-/* ── Markdown 内容样式 ── */
-.markdown-body h1 {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-h);
-  margin: 1.2em 0 0.6em;
-  padding-bottom: 0.4em;
-  border-bottom: 1px solid var(--border);
-  line-height: 1.4;
-}
-
-.markdown-body h1:first-child {
-  margin-top: 0;
-}
-
-.markdown-body h2 {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-h);
-  margin: 1em 0 0.5em;
-  line-height: 1.4;
-}
-
-.markdown-body h2:first-child {
-  margin-top: 0;
-}
-
-.markdown-body p {
-  margin: 0.5em 0;
-  line-height: 1.7;
-}
-
-.markdown-body p:first-child {
-  margin-top: 0;
-}
-
-.markdown-body p:last-child {
-  margin-bottom: 0;
-}
-
-.markdown-body ul,
-.markdown-body ol {
-  margin: 0.4em 0;
-  padding-left: 1.5em;
-  line-height: 1.7;
-}
-
-.markdown-body li {
-  margin: 0.2em 0;
-}
-
-.markdown-body strong {
-  font-weight: 600;
-  color: var(--text-h);
-}
-
-.markdown-body em {
-  font-style: italic;
-}
-
-.markdown-body br {
-  display: block;
-  content: '';
-  margin-top: 0.25em;
+@layer components {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 3px;
+  }
 }
