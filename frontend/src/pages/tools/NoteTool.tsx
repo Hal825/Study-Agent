@@ -1,9 +1,15 @@
-import { useCallback } from 'react'
-import { ArrowLeft, ArrowRight, RotateCcw, Copy, Download } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, ArrowRight, RotateCcw, Copy, Download, ChevronDown } from 'lucide-react'
 import { useWorkflowStore } from '../../stores/workflowStore'
 import { useAgentStore } from '../../stores/agentStore'
+import { useOutputStore } from '../../stores/outputStore'
 import { NOTE_TEMPLATES, type WorkflowStep, type NoteTemplate } from '../../types'
-import { simulateAgentProcessing } from '../../services/agent'
+import {
+  agentGenerateNote,
+  markdownToPlainText,
+  downloadAsPDF,
+  downloadAsDocx,
+} from '../../services/agent'
 import WorkflowContainer from '../../components/workflow/WorkflowContainer'
 import UploadZone from '../../components/common/UploadZone'
 import AgentProgress from '../../components/workflow/AgentProgress'
@@ -23,6 +29,19 @@ export default function NoteTool() {
   } = useWorkflowStore()
 
   const { startProcessing, advanceStage, finishProcessing, setError } = useAgentStore()
+  const addOutput = useOutputStore((s) => s.addOutput)
+
+  // 保存到输出历史（结果步骤进入时）
+  const savedRef = useRef(false)
+  useEffect(() => {
+    if (step === 'result' && result && selectedTemplate && !savedRef.current) {
+      addOutput(selectedTemplate, result)
+      savedRef.current = true
+    }
+    if (step !== 'result') {
+      savedRef.current = false
+    }
+  }, [step, result, selectedTemplate, addOutput])
 
   // ==========================================
   // Step transitions
@@ -43,7 +62,7 @@ export default function NoteTool() {
       startProcessing()
 
       try {
-        const finalResult = await simulateAgentProcessing(template, content, advanceStage)
+        const finalResult = await agentGenerateNote(template, content, advanceStage)
         setResult(finalResult)
         finishProcessing()
         setStep('result')
@@ -74,12 +93,13 @@ export default function NoteTool() {
   // ==========================================
   // Export actions
   // ==========================================
+  const [downloadOpen, setDownloadOpen] = useState(false)
+
   const handleCopy = async () => {
     await navigator.clipboard.writeText(result)
-    // Brief feedback could be added here
   }
 
-  const handleDownload = () => {
+  const handleDownloadMD = () => {
     const blob = new Blob([result], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -87,6 +107,37 @@ export default function NoteTool() {
     a.download = 'notes.md'
     a.click()
     URL.revokeObjectURL(url)
+    setDownloadOpen(false)
+  }
+
+  const handleDownloadTXT = () => {
+    const text = markdownToPlainText(result)
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'notes.txt'
+    a.click()
+    URL.revokeObjectURL(url)
+    setDownloadOpen(false)
+  }
+
+  const handleDownloadPDF = async () => {
+    try {
+      await downloadAsPDF(result, 'notes')
+    } catch {
+      alert('PDF 导出失败，请确保后端服务已启动')
+    }
+    setDownloadOpen(false)
+  }
+
+  const handleDownloadDocx = async () => {
+    try {
+      await downloadAsDocx(result, 'notes')
+    } catch {
+      alert('Word 导出失败，请确保后端服务已启动')
+    }
+    setDownloadOpen(false)
   }
 
   // ==========================================
@@ -98,7 +149,7 @@ export default function NoteTool() {
 
   const renderConfigStep = () => (
     <div className="animate-fade-in">
-      <h3 className="mb-5 text-sm font-medium text-gray-500 uppercase tracking-wide">
+      <h3 className="mb-5 text-xs font-semibold uppercase tracking-wider text-ink-muted">
         选择笔记模板
       </h3>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -123,29 +174,53 @@ export default function NoteTool() {
     <div className="animate-fade-in">
       {/* Toolbar */}
       <div className="mb-6 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
           生成的笔记
         </h3>
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-ink-soft hover:bg-paper transition-colors"
           >
             <Copy size={14} />
             复制
           </button>
-          <button
-            onClick={handleDownload}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-700 transition-colors"
-          >
-            <Download size={14} />
-            下载 .md
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setDownloadOpen(!downloadOpen)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-sm text-white hover:bg-ink/85 transition-colors"
+            >
+              <Download size={14} />
+              下载
+              <ChevronDown size={12} />
+            </button>
+            {downloadOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setDownloadOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-border bg-surface py-1 shadow-panel animate-fade-in">
+                  {[
+                    { label: 'Markdown (.md)', action: handleDownloadMD },
+                    { label: '纯文本 (.txt)', action: handleDownloadTXT },
+                    { label: 'PDF', action: handleDownloadPDF },
+                    { label: 'Word (.docx)', action: handleDownloadDocx },
+                  ].map((opt) => (
+                    <button
+                      key={opt.label}
+                      onClick={opt.action}
+                      className="w-full px-4 py-2 text-left text-sm text-ink-soft hover:bg-paper transition-colors"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Rendered markdown */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 sm:p-8 shadow-sm">
+      <div className="rounded-2xl border border-border bg-surface p-6 sm:p-8 shadow-card">
         <MarkdownRenderer content={result} />
       </div>
     </div>
@@ -171,12 +246,12 @@ export default function NoteTool() {
       {stepContent[step]}
 
       {/* Navigation buttons */}
-      <div className="mt-10 flex items-center justify-between border-t border-gray-200 pt-6">
+      <div className="mt-10 flex items-center justify-between border-t border-border pt-6">
         <div>
           {step !== 'input' && step !== 'process' && (
             <button
               onClick={prevStep}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-ink-soft hover:bg-paper transition-colors"
             >
               <ArrowLeft size={16} />
               上一步
@@ -187,7 +262,7 @@ export default function NoteTool() {
           {step === 'result' ? (
             <button
               onClick={handleReset}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-ink-soft hover:bg-paper transition-colors"
             >
               <RotateCcw size={16} />
               重新生成
@@ -198,8 +273,8 @@ export default function NoteTool() {
               disabled={!canProceed()}
               className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium transition-all ${
                 canProceed()
-                  ? 'bg-primary-600 text-white hover:bg-primary-700 shadow-sm'
-                  : 'cursor-not-allowed bg-gray-100 text-gray-400'
+                  ? 'bg-ink text-white hover:bg-ink/85 shadow-sm'
+                  : 'cursor-not-allowed bg-paper-dark text-ink-muted/40'
               }`}
             >
               {step === 'config' ? '开始生成' : '下一步'}
@@ -229,21 +304,21 @@ function NoteTemplateCard({
       onClick={onSelect}
       className={`rounded-2xl border p-5 text-left transition-all duration-200 ${
         isSelected
-          ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-100'
-          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/50'
+          ? 'border-ink/30 bg-paper shadow-sm'
+          : 'border-border bg-surface hover:border-ink/15 hover:bg-paper/50'
       }`}
     >
       <div className="mb-2 text-2xl">{template.icon === 'list-tree' ? '🌳' : template.icon === 'file-text' ? '📄' : template.icon === 'layout-panel-top' ? '📋' : '💬'}</div>
       <h4
-        className={`mb-1 text-base font-semibold ${
-          isSelected ? 'text-primary-700' : 'text-gray-900'
+        className={`mb-1 text-sm font-semibold ${
+          isSelected ? 'text-ink' : 'text-ink'
         }`}
       >
         {template.name}
       </h4>
-      <p className="text-sm text-gray-500 leading-relaxed">{template.description}</p>
+      <p className="text-xs text-ink-muted leading-relaxed">{template.description}</p>
       {isSelected && (
-        <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-primary-100 px-2.5 py-0.5 text-xs font-medium text-primary-700">
+        <div className="mt-3 inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-0.5 text-2xs font-medium text-white">
           已选择
         </div>
       )}

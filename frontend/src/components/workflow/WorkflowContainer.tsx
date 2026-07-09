@@ -18,9 +18,9 @@ export default function WorkflowContainer({
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       {/* Header */}
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
-        <p className="mt-1 text-sm text-gray-500">{description}</p>
+      <div className="mb-8 text-center">
+        <h2 className="font-display text-2xl font-bold text-ink tracking-tight">{title}</h2>
+        <p className="mt-1.5 text-sm text-ink-muted">{description}</p>
       </div>
 
       {/* Step indicator */}
@@ -28,8 +28,8 @@ export default function WorkflowContainer({
         <StepIndicator currentStep={currentStep} />
       </div>
 
-      {/* Step content */}
-      <div className="min-h-[300px]">{children}</div>
+      {/* Content area */}
+      <div>{children}</div>
     </div>
   )
 }

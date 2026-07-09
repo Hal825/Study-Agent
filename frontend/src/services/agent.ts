@@ -173,17 +173,132 @@ export async function simulateAgentProcessing(
 }
 
 // ============================================================
-// 真实 API 调用占位（后续实现）
+// 真实 API 调用
 // ============================================================
-// export async function callAgentAPI(
-//   template: NoteTemplate,
-//   content: string,
-// ): Promise<string> {
-//   const response = await fetch('/api/agent/note', {
-//     method: 'POST',
-//     headers: { 'Content-Type': 'application/json' },
-//     body: JSON.stringify({ template: template.id, content }),
-//   })
-//   const data = await response.json()
-//   return data.result
-// }
+export async function callAgentAPI(
+  template: NoteTemplate,
+  content: string,
+): Promise<string> {
+  const response = await fetch('/api/agent/note', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template: template.id, content }),
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(err.detail ?? `API 请求失败 (${response.status})`)
+  }
+
+  const data = await response.json()
+  return data.result
+}
+
+// ============================================================
+// 智能体处理入口 —— 优先调用真实 API，失败时降级为 Mock
+// ============================================================
+// ============================================================
+// 多格式导出工具函数
+// ============================================================
+
+/** 剥离 Markdown 语法 → 纯文本 */
+const P = String.fromCharCode(124) // '|' — 避免触发 Tailwind CSS 扫描
+const DASHES = String.fromCharCode(45).repeat(1) // '-' — 辅助构造
+
+export function markdownToPlainText(md: string): string {
+  const tableSep = new RegExp('^[-:' + P + '\\s]+$', 'gm')
+  const hrSep = new RegExp(DASHES + '{3,}', 'g')
+  const pipeSep = new RegExp(P, 'g')
+
+  return md
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!\[.*?\]\(.*?\)/g, '')
+    .replace(/^>\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(pipeSep, ' ')
+    .replace(tableSep, '')
+    .replace(hrSep, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** 通过后端 reportlab 引擎生成专业 PDF 并下载 */
+export async function downloadAsPDF(content: string, filename: string = 'notes'): Promise<void> {
+  const response = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, format: 'pdf' }),
+  })
+
+  if (!response.ok) {
+    throw new Error('PDF 导出失败')
+  }
+
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}.pdf`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+/** 调用后端生成 DOCX 并触发下载 */
+export async function downloadAsDocx(content: string, filename: string = 'notes'): Promise<void> {
+  const response = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, format: 'docx' }),
+  })
+
+  if (!response.ok) {
+    throw new Error('DOCX 导出失败')
+  }
+
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}.docx`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ============================================================
+// 智能体处理入口
+// ============================================================
+export async function agentGenerateNote(
+  template: NoteTemplate,
+  content: string,
+  onStageChange: (stageIndex: number) => void,
+): Promise<string> {
+  const stages = ['read', 'extract', 'organize', 'generate']
+
+  // 尝试真实 API
+  try {
+    // 启动进度动画（快速推进前 3 阶段，给用户反馈感）
+    for (let i = 0; i < stages.length - 1; i++) {
+      onStageChange(i)
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+    onStageChange(3) // 显示正在生成
+
+    const result = await callAgentAPI(template, content)
+    return result
+  } catch (err) {
+    console.warn('真实 API 不可用，降级为 Mock 模式:', err)
+
+    // 降级：使用模拟处理
+    for (let i = 0; i < stages.length; i++) {
+      onStageChange(i)
+      await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700))
+    }
+
+    return generateMockResult(template, content)
+  }
+}

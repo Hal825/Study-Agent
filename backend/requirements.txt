@@ -1,44 +1,6 @@
-﻿# ====================
-# Web 框架 & 服务器
-# ====================
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20          # 支持表单数据上传
-
-# ====================
-# 环境变量 & 配置
-# ====================
-python-dotenv==1.0.1
-pydantic-settings==2.6.0          # 更强大的配置管理
-
-# ====================
-# 数据库（PostgreSQL）
-# ====================
-sqlalchemy==2.0.36                # ORM 核心
-psycopg2-binary==2.9.10           # PostgreSQL 驱动（Windows 预编译，无需 C++ 编译器！）
-alembic==1.14.1                   # 数据库迁移管理
-
-# ====================
-# 缓存 & 消息队列
-# ====================
-redis==5.2.1
-hiredis==3.0.0                    # Redis 高性能解析器
-
-# ====================
-# AI / LLM 核心
-# ====================
-langchain==0.3.15                 # LLM 应用框架
-langgraph==0.2.60                 # Agent 状态机核心（你的主动式交互大脑！）
-langchain-openai==0.3.0           # OpenAI 适配器（可替换为其他模型）
-
-# ====================
-# HTTP 客户端 & 工具
-# ====================
-httpx==0.28.1                     # 异步 HTTP 请求（LangChain 依赖）
-openai==1.60.0                    # OpenAI 官方 SDK
-
-# ====================
-# 数据处理 & 工具
-# ====================
-pydantic==2.10.4                  # 数据校验（FastAPI 自带，但明确版本）
-pydantic-core==2.27.2
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+openai==1.*
+python-dotenv==1.*
+httpx==0.28.*
+python-docx==1.*
