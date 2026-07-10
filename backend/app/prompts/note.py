@@ -1,44 +1,43 @@
 """
-笔记生成的 System Prompt 模板。
+笔记生成的 System Prompt 模板（兼容层）。
 
-与前端 types/index.ts 中的 NOTE_TEMPLATES 保持同步。
+模板内容已迁移至 templates/note/*.md 文件，
+通过 PromptRegistry 加载。此模块保留 NOTE_PROMPTS 字典供
+已有 API 代码兼容使用，后续逐步替换为 registry.get("note/xxx")。
 """
 
-NOTE_PROMPTS: dict[str, str] = {
-    "outline": (
-        "你是一位专业的学习笔记整理助手。请将用户提供的内容整理为层次分明的**大纲笔记**，要求如下：\n\n"
-        "1. 使用多级 Markdown 标题（# ## ###）组织层次结构\n"
-        "2. 用无序列表（-）和有序列表（1. 2.）梳理要点\n"
-        "3. 用 **加粗** 突出关键概念和术语\n"
-        "4. 在末尾添加「总结回顾」部分，用一句话概括核心内容\n"
-        "5. 结构清晰、层次分明，方便用户快速浏览和复习\n\n"
-        "请直接输出 Markdown 格式的笔记，不要输出与笔记无关的内容。"
-    ),
-    "summary": (
-        "你是一位专业的学习笔记整理助手。请将用户提供的内容整理为**详细摘要笔记**，要求如下：\n\n"
-        "1. 以连贯的段落形式组织内容，使用二级标题分段\n"
-        "2. 保留重要的细节、数据和案例，不要遗漏关键信息\n"
-        "3. 适当使用 > 引用块突出重点观点\n"
-        "4. 在开头添加「概述」部分，在结尾添加「总结」部分\n"
-        "5. 语言流畅、逻辑清晰，阅读性强\n\n"
-        "请直接输出 Markdown 格式的笔记，不要输出与笔记无关的内容。"
-    ),
-    "cornell": (
-        "你是一位专业的学习笔记整理助手。请将用户提供的内容整理为**康奈尔笔记**格式，要求如下：\n\n"
-        "1. 使用 Markdown 表格，左栏为「线索栏」（关键词/问题），右栏为「笔记栏」（主要内容）\n"
-        "2. 线索栏提炼 5-8 个关键问题或提示词\n"
-        "3. 笔记栏给出对应问题的详细解答\n"
-        "4. 表格下方添加「总结栏」部分，用自己的话概括核心要点\n"
-        "5. 问题和回答要一一对应，简洁精准\n\n"
-        "请直接输出 Markdown 格式的笔记，不要输出与笔记无关的内容。"
-    ),
-    "qa": (
-        "你是一位专业的学习笔记整理助手。请将用户提供的内容整理为**问答笔记**格式，要求如下：\n\n"
-        "1. 用 ## Q1:、## Q2: 等作为问题标题\n"
-        "2. 每个问题后用 **答：** 开头给出详细回答\n"
-        "3. 使用 --- 分隔线分隔不同的问答对\n"
-        "4. 提炼 5-8 个关键问题，涵盖内容的核心知识点、重要概念、应用场景和常见误区\n"
-        "5. 问题和回答要有深度，适合用户用于自测和复习\n\n"
-        "请直接输出 Markdown 格式的笔记，不要输出与笔记无关的内容。"
-    ),
-}
+from app.prompts.registry import get_registry
+
+# 有效的模板 ID（与前端 types/index.ts 中 NOTE_TEMPLATES 保持同步）
+VALID_TEMPLATES = {"outline", "summary", "cornell", "qa"}
+
+
+def _load_note_prompts() -> dict[str, str]:
+    """
+    从 PromptRegistry 加载全部笔记模板。
+
+    若 registry 未初始化（如测试环境），返回空字典。
+    """
+    try:
+        registry = get_registry()
+        prompts = {}
+        for tpl_id in VALID_TEMPLATES:
+            try:
+                prompts[tpl_id] = registry.get(f"note/{tpl_id}")
+            except KeyError:
+                prompts[tpl_id] = f"[模板 note/{tpl_id} 未找到]"
+        return prompts
+    except RuntimeError:
+        # PromptRegistry 未初始化 —— 返回空字典，调用方自行处理
+        return {}
+
+
+# 延迟加载：首次访问时从 registry 读取
+# 这样在 import 时 registry 可能还未初始化，但在实际使用时已就绪
+NOTE_PROMPTS: dict[str, str] = _load_note_prompts()
+
+
+def reload_note_prompts() -> None:
+    """重新加载笔记模板（用于模板文件热更新）。"""
+    global NOTE_PROMPTS
+    NOTE_PROMPTS = _load_note_prompts()

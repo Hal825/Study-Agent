@@ -5,6 +5,7 @@
 不直接实例化具体实现。
 """
 
+import os
 from dataclasses import dataclass
 
 from app.data.runtime.checkpoint_store import MemoryCheckpointStore
@@ -19,6 +20,15 @@ from app.data.interfaces import (
 )
 from app.data.cleanup import CleanupScheduler
 from app.data.unit_of_work import UnitOfWorkFactory
+
+from app.tools.interfaces import IToolRegistry
+from app.tools.registry import ToolRegistry
+from app.tools.content_parser import ContentParser
+from app.tools.entity_extractor import EntityExtractor
+from app.tools.structure_analyzer import StructureAnalyzer
+
+from app.prompts.registry import PromptRegistry
+
 from app.services.llm_service import LLMService
 from app.services.export_service import ExportService
 from app.services.event_bus import EventBus
@@ -26,7 +36,7 @@ from app.services.event_bus import EventBus
 
 @dataclass
 class Container:
-    """全局服务容器（Phase 1：内存实现）。"""
+    """全局服务容器。"""
 
     # Data Layer — Runtime
     checkpoint_store: CheckpointStore
@@ -41,6 +51,12 @@ class Container:
     cleanup_scheduler: CleanupScheduler
     uow_factory: UnitOfWorkFactory
 
+    # Tool Layer
+    tool_registry: IToolRegistry
+
+    # Prompt Layer
+    prompt_registry: PromptRegistry
+
     # Service Layer
     llm_service: LLMService
     export_service: ExportService
@@ -48,7 +64,7 @@ class Container:
 
     @classmethod
     def create_dev(cls) -> "Container":
-        """创建开发环境容器（全部使用内存实现 + 后台清理）。"""
+        """创建开发环境容器。"""
 
         # --- Runtime stores ---
         checkpoint_store = MemoryCheckpointStore()
@@ -64,9 +80,14 @@ class Container:
         export_service = ExportService()
         event_bus = EventBus()
 
+        # --- Prompt Layer ---
+        prompt_registry = cls._build_prompt_registry()
+
+        # --- Tool Layer ---
+        tool_registry = cls._build_tool_registry(llm_service)
+
         # --- Cleanup scheduler ---
         cleanup = CleanupScheduler(interval_seconds=300)
-        # 注册需要定期清理的 store
         for store in [session_store, cache_store]:
             if isinstance(store, BaseMemoryStore):
                 cleanup.register(store)
@@ -78,14 +99,37 @@ class Container:
             note_repo=note_repo,
             user_pref_repo=user_pref_repo,
             cleanup_scheduler=cleanup,
-            uow_factory=UnitOfWorkFactory(None),  # 先占位，下面补上
+            uow_factory=UnitOfWorkFactory(None),
+            tool_registry=tool_registry,
+            prompt_registry=prompt_registry,
             llm_service=llm_service,
             export_service=export_service,
             event_bus=event_bus,
         )
-        # UoW 工厂需要引用容器本身
         container.uow_factory = UnitOfWorkFactory(container)
         return container
+
+    # ================================================================
+    # 子工厂方法
+    # ================================================================
+
+    @staticmethod
+    def _build_tool_registry(llm_service: LLMService) -> IToolRegistry:
+        """组装 Tool 注册中心。"""
+        reg = ToolRegistry()
+        reg.register(ContentParser())
+        reg.register(EntityExtractor(llm_service))
+        reg.register(StructureAnalyzer(llm_service))
+        return reg
+
+    @staticmethod
+    def _build_prompt_registry() -> PromptRegistry:
+        """组装 Prompt 注册中心。"""
+        # 模板目录相对于 backend/ 运行目录
+        templates_dir = os.path.join(
+            os.path.dirname(__file__), "prompts", "templates"
+        )
+        return PromptRegistry(templates_dir)
 
 
 # 模块级单例
