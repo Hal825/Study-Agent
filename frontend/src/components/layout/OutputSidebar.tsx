@@ -1,21 +1,7 @@
 import { useState } from 'react'
-import {
-  PanelRightClose,
-  PanelRightOpen,
-  Trash2,
-  Download,
-  Eye,
-  FileText,
-  Clock,
-  X,
-  ChevronDown,
-} from 'lucide-react'
+import { Trash2, Download, Eye, FileText, Clock, X, ChevronDown } from 'lucide-react'
 import { useOutputStore, type OutputItem } from '../../stores/outputStore'
-import {
-  markdownToPlainText,
-  downloadAsPDF,
-  downloadAsDocx,
-} from '../../services/agent'
+import { markdownToPlainText, downloadAsPDF, downloadAsDocx } from '../../services/agent'
 
 const TEMPLATE_LABELS: Record<string, string> = {
   outline: '大纲笔记',
@@ -39,42 +25,22 @@ function relativeTime(ts: number): string {
   return `${Math.floor(seconds / 86400)} 天前`
 }
 
-export default function OutputSidebar() {
-  const [collapsed, setCollapsed] = useState(false)
+export default function OutputSidebar({ onClose }: { onClose: () => void }) {
   const [previewId, setPreviewId] = useState<string | null>(null)
   const { outputs, removeOutput, clearAll } = useOutputStore()
 
   const previewItem = outputs.find((o) => o.id === previewId)
 
-  if (collapsed) {
-    return (
-      <div className="flex flex-col items-center border-l border-border bg-surface py-4 w-11">
-        <button
-          onClick={() => setCollapsed(false)}
-          className="rounded-lg p-1.5 text-ink-muted hover:bg-paper hover:text-ink-soft transition-colors"
-          title="展开输出历史"
-        >
-          <PanelRightOpen size={16} />
-        </button>
-        {outputs.length > 0 && (
-          <span className="mt-2 rounded-full bg-ink px-1.5 py-0.5 text-2xs font-medium text-white/80">
-            {outputs.length}
-          </span>
-        )}
-      </div>
-    )
-  }
-
   return (
     <>
-      <aside className="flex w-72 flex-col border-l border-border bg-surface overflow-hidden">
+      <aside className="flex w-72 flex-col border-l border-border bg-surface overflow-hidden animate-slide-in-right">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
-            <FileText size={15} className="text-ink-muted" />
+            <FileText size={14} className="text-ink-muted" />
             <span className="text-sm font-medium text-ink-soft">输出历史</span>
             {outputs.length > 0 && (
-              <span className="rounded-full bg-paper-dark px-1.5 py-0.5 text-2xs text-ink-muted">
+              <span className="rounded-md bg-paper-dark px-1.5 py-0.5 text-2xs text-ink-muted">
                 {outputs.length}
               </span>
             )}
@@ -83,18 +49,18 @@ export default function OutputSidebar() {
             {outputs.length > 0 && (
               <button
                 onClick={clearAll}
-                className="rounded-lg p-1.5 text-ink-muted/50 hover:bg-paper hover:text-ink-soft transition-colors"
+                className="rounded-lg p-1.5 text-ink-muted/40 hover:bg-paper-dark hover:text-ink-soft transition-colors"
                 title="清空全部"
               >
                 <Trash2 size={13} />
               </button>
             )}
             <button
-              onClick={() => setCollapsed(true)}
-              className="rounded-lg p-1.5 text-ink-muted/50 hover:bg-paper hover:text-ink-soft transition-colors"
-              title="折叠"
+              onClick={onClose}
+              className="rounded-lg p-1.5 text-ink-muted/40 hover:bg-paper-dark hover:text-ink-soft transition-colors"
+              title="关闭"
             >
-              <PanelRightClose size={15} />
+              <X size={14} />
             </button>
           </div>
         </div>
@@ -102,8 +68,8 @@ export default function OutputSidebar() {
         {/* List */}
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {outputs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-ink-muted/40">
-              <Clock size={28} className="mb-3" />
+            <div className="flex flex-col items-center justify-center py-20 text-ink-muted/30">
+              <Clock size={24} className="mb-3" />
               <p className="text-xs">暂无输出</p>
               <p className="text-2xs mt-1">生成笔记后将在这里显示</p>
             </div>
@@ -125,29 +91,29 @@ export default function OutputSidebar() {
       {/* Preview modal */}
       {previewItem && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 backdrop-blur-sm"
           onClick={() => setPreviewId(null)}
         >
           <div
-            className="relative mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-surface p-6 shadow-panel animate-slide-up"
+            className="relative mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-surface p-6 shadow-panel animate-slide-up scrollbar-thin"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-5 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TEMPLATE_COLORS[previewItem.template] ?? 'bg-paper-dark text-ink-muted'}`}>
+                <span className={`rounded-lg px-2 py-0.5 text-xs font-medium ${TEMPLATE_COLORS[previewItem.template] ?? 'bg-paper-dark text-ink-muted'}`}>
                   {TEMPLATE_LABELS[previewItem.template] ?? previewItem.template}
                 </span>
                 <span className="text-xs text-ink-muted">{relativeTime(previewItem.createdAt)}</span>
               </div>
               <button
                 onClick={() => setPreviewId(null)}
-                className="rounded-lg p-1.5 text-ink-muted/50 hover:bg-paper hover:text-ink-soft transition-colors"
+                className="rounded-lg p-1.5 text-ink-muted/40 hover:bg-paper-dark hover:text-ink-soft transition-colors"
               >
                 <X size={16} />
               </button>
             </div>
             <h3 className="text-lg font-semibold text-ink mb-4 font-display">{previewItem.title}</h3>
-            <div className="markdown-body text-sm text-ink-soft leading-relaxed whitespace-pre-wrap">
+            <div className="text-sm text-ink-soft leading-relaxed whitespace-pre-wrap">
               {previewItem.content.slice(0, 5000)}
               {previewItem.content.length > 5000 && (
                 <p className="text-ink-muted mt-4 text-xs">...（内容已截断）</p>
@@ -174,7 +140,6 @@ function OutputCard({
   const doDownload = async (format: string) => {
     setDropdownOpen(false)
     const filename = item.title.replace(/[^\w一-鿿]/g, '_').slice(0, 30)
-
     switch (format) {
       case 'md': {
         const blob = new Blob([item.content], { type: 'text/markdown' })
@@ -212,23 +177,22 @@ function OutputCard({
             {item.title}
           </button>
           <div className="mt-1 flex items-center gap-1.5">
-            <span className={`rounded-full px-1.5 py-0.5 text-2xs font-medium ${TEMPLATE_COLORS[item.template] ?? ''}`}>
+            <span className={`rounded-md px-1.5 py-0.5 text-2xs font-medium ${TEMPLATE_COLORS[item.template] ?? ''}`}>
               {TEMPLATE_LABELS[item.template] ?? item.template}
             </span>
-            <span className="text-2xs text-ink-muted/60">{relativeTime(item.createdAt)}</span>
+            <span className="text-2xs text-ink-muted/50">{relativeTime(item.createdAt)}</span>
           </div>
         </div>
 
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          <button onClick={onPreview} className="rounded-lg p-1 text-ink-muted/40 hover:bg-paper hover:text-ink-soft transition-colors" title="预览">
+          <button onClick={onPreview} className="rounded-lg p-1 text-ink-muted/30 hover:bg-paper-dark hover:text-ink-soft transition-colors" title="预览">
             <Eye size={13} />
           </button>
 
-          {/* Download dropdown */}
           <div className="relative">
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="rounded-lg p-1 text-ink-muted/40 hover:bg-paper hover:text-ink-soft transition-colors flex items-center gap-0.5"
+              className="rounded-lg p-1 text-ink-muted/30 hover:bg-paper-dark hover:text-ink-soft transition-colors flex items-center gap-0.5"
               title="下载"
             >
               <Download size={13} />
@@ -237,7 +201,7 @@ function OutputCard({
             {dropdownOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
-                <div className="absolute right-0 top-7 z-20 w-36 rounded-xl border border-border bg-surface py-1 shadow-panel animate-fade-in">
+                <div className="absolute right-0 top-7 z-20 w-36 rounded-2xl border border-border bg-surface py-1 shadow-panel animate-fade-in">
                   {[
                     { label: 'Markdown (.md)', value: 'md' },
                     { label: '纯文本 (.txt)', value: 'txt' },
@@ -247,7 +211,7 @@ function OutputCard({
                     <button
                       key={opt.value}
                       onClick={() => doDownload(opt.value)}
-                      className="w-full px-3 py-1.5 text-left text-xs text-ink-soft hover:bg-paper transition-colors"
+                      className="w-full px-3 py-1.5 text-left text-xs text-ink-soft hover:bg-paper-dark transition-colors"
                     >
                       {opt.label}
                     </button>
@@ -257,7 +221,7 @@ function OutputCard({
             )}
           </div>
 
-          <button onClick={onDelete} className="rounded-lg p-1 text-ink-muted/40 hover:bg-paper hover:text-ink-soft transition-colors" title="删除">
+          <button onClick={onDelete} className="rounded-lg p-1 text-ink-muted/30 hover:bg-paper-dark hover:text-ink-soft transition-colors" title="删除">
             <Trash2 size={13} />
           </button>
         </div>

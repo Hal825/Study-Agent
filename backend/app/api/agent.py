@@ -1,27 +1,19 @@
 """
 Agent API 端点 —— 智能体笔记生成。
 
-Phase 1：将直接 LLM 调用迁移到 Service Layer，
-同时新增 SSE 流式端点。
+- POST /api/agent/note       → 同步（兼容旧版）
+- POST /api/agent/note/stream → SSE 流式（LangGraph 驱动）
 """
 
-from fastapi import APIRouter, HTTPException, Request
+import uuid
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.container import get_container
-from app.prompts.note import NOTE_PROMPTS
-from app.services.event_bus import (
-    EventType,
-    make_event,
-    stage_change,
-    tool_start,
-    tool_finish,
-)
+from app.prompts.note import VALID_TEMPLATES
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
-
-VALID_TEMPLATES = set(NOTE_PROMPTS.keys())
 
 
 # ---- 请求/响应模型 ----
@@ -39,11 +31,13 @@ class NoteResponse(BaseModel):
     result: str = Field(..., description="Markdown 格式的生成笔记")
 
 
-# ---- 传统请求-响应端点（保留向后兼容） ----
+# ---- 同步端点（兼容旧版） ----
 @router.post("/note", response_model=NoteResponse)
 async def create_note(request: NoteRequest) -> NoteResponse:
     """
     根据上传内容和选定的模板生成学习笔记（同步）。
+
+    内部使用 LangGraph Agent 图执行生成流程。
     """
     if request.template not in VALID_TEMPLATES:
         raise HTTPException(
@@ -52,27 +46,32 @@ async def create_note(request: NoteRequest) -> NoteResponse:
         )
 
     container = get_container()
-    system_prompt = NOTE_PROMPTS[request.template]
+    executor = container.agent_executor
+    session_id = f"sync_note_{uuid.uuid4().hex[:8]}"
 
     try:
-        result = await container.llm_service.generate_legacy(
-            system_prompt=system_prompt,
-            user_message=request.content,
+        result = await executor.run_sync(
+            content=request.content,
+            template_id=request.template,
+            session_id=session_id,
         )
         return NoteResponse(result=result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---- SSE 流式端点（新增） ----
+# ---- SSE 流式端点 ----
 @router.post("/note/stream")
 async def create_note_stream(request: NoteRequest):
     """
     根据上传内容和选定的模板生成学习笔记（SSE 流式推送）。
 
-    前端连接此端点可实时接收 agent 执行过程事件。
+    前端连接此端点可实时接收 Agent 执行过程事件：
+    - agent_start: Agent 启动
+    - stage_change: 阶段变更（parse/extract/analyze/confirm/generate）
+    - node_finish: 节点完成
+    - agent_finish: 生成完成，data.result 包含笔记
+    - agent_error: 出错
     """
     if request.template not in VALID_TEMPLATES:
         raise HTTPException(
@@ -81,14 +80,14 @@ async def create_note_stream(request: NoteRequest):
         )
 
     container = get_container()
-    session_id = f"note_{request.template}"
+    executor = container.agent_executor
+    session_id = f"stream_note_{uuid.uuid4().hex[:8]}"
 
     return StreamingResponse(
-        _stream_note_generation(
+        executor.run_stream(
             content=request.content,
             template_id=request.template,
             session_id=session_id,
-            container=container,
         ),
         media_type="text/event-stream",
         headers={
@@ -97,61 +96,3 @@ async def create_note_stream(request: NoteRequest):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-async def _stream_note_generation(
-    content: str,
-    template_id: str,
-    session_id: str,
-    container,
-):
-    """SSE 生成器：逐步推送 agent 执行过程事件。"""
-    stages = [
-        (0, "读取并理解内容..."),
-        (1, "提取关键知识点..."),
-        (2, "组织逻辑结构..."),
-        (3, "生成笔记内容..."),
-    ]
-    event_bus = container.event_bus
-    system_prompt = NOTE_PROMPTS[template_id]
-
-    try:
-        # 1. Agent 开始
-        yield _sse(make_event(EventType.AGENT_START, session_id, template=template_id))
-
-        # 2. 模拟阶段推进（Phase 1：真实阶段信息来自后端处理）
-        for idx, label in stages[:-1]:
-            yield _sse(stage_change(session_id, idx, label))
-
-        # 3. 调用 LLM（作为 generate 阶段）
-        yield _sse(stage_change(session_id, 3, stages[-1][1]))
-        yield _sse(tool_start(session_id, "llm_generate", {"template": template_id}))
-
-        result = await container.llm_service.generate_legacy(
-            system_prompt=system_prompt,
-            user_message=content,
-        )
-
-        yield _sse(tool_finish(session_id, "llm_generate", 0))
-
-        # 4. Agent 完成
-        yield _sse(make_event(
-            EventType.AGENT_FINISH, session_id,
-            result=result,
-        ))
-
-    except Exception as e:
-        yield _sse(make_event(
-            EventType.AGENT_ERROR, session_id,
-            error=str(e),
-        ))
-
-
-def _sse(event) -> str:
-    """格式化为 SSE 字符串。"""
-    import json
-    data = json.dumps(
-        {"type": event.type.value, "data": event.data},
-        ensure_ascii=False,
-    )
-    return f"event: {event.type.value}\ndata: {data}\n\n"

@@ -10,23 +10,21 @@
   body {
     @apply bg-paper text-ink antialiased;
     font-family: theme('fontFamily.body');
-    font-feature-settings: 'cv01' 1, 'cv03' 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
   }
 
   ::selection {
-    @apply bg-gold-200 text-ink;
+    @apply bg-accent-200 text-ink;
   }
 
-  /* Focus ring — accessible but subtle */
   :focus-visible {
     outline: 2px solid theme('colors.primary.400');
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: 6px;
   }
 
-  /* Reduced motion */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
@@ -37,10 +35,10 @@
 }
 
 @layer components {
-  /* Custom scrollbar — warm, subtle */
+  /* Custom scrollbar — warm & subtle */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #D5D0C8 transparent;
+    scrollbar-color: #DBD7D2 transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 5px;
@@ -49,23 +47,23 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: #D5D0C8;
+    background-color: #DBD7D2;
     border-radius: 3px;
   }
 
-  /* Dark sidebar scrollbar */
-  .scrollbar-dark {
+  /* Sidebar scrollbar */
+  .scrollbar-sidebar {
     scrollbar-width: thin;
-    scrollbar-color: #3D3832 transparent;
+    scrollbar-color: #D5D1CB transparent;
   }
-  .scrollbar-dark::-webkit-scrollbar {
-    width: 5px;
+  .scrollbar-sidebar::-webkit-scrollbar {
+    width: 4px;
   }
-  .scrollbar-dark::-webkit-scrollbar-track {
+  .scrollbar-sidebar::-webkit-scrollbar-track {
     background: transparent;
   }
-  .scrollbar-dark::-webkit-scrollbar-thumb {
-    background-color: #3D3832;
-    border-radius: 3px;
+  .scrollbar-sidebar::-webkit-scrollbar-thumb {
+    background-color: #D5D1CB;
+    border-radius: 2px;
   }
 }

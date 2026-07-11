@@ -11,3 +11,4 @@ class PromptTemplate(BaseModel):
     version: str = Field(default="1.0", description="模板版本")
     description: str = Field(default="", description="模板用途描述")
     content: str = Field(..., description="模板文本内容")
+

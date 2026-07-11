@@ -33,6 +33,8 @@ from app.services.llm_service import LLMService
 from app.services.export_service import ExportService
 from app.services.event_bus import EventBus
 
+from app.agent.executor import AgentExecutor
+
 
 @dataclass
 class Container:
@@ -62,6 +64,9 @@ class Container:
     export_service: ExportService
     event_bus: EventBus
 
+    # Agent Layer
+    agent_executor: AgentExecutor
+
     @classmethod
     def create_dev(cls) -> "Container":
         """创建开发环境容器。"""
@@ -86,6 +91,13 @@ class Container:
         # --- Tool Layer ---
         tool_registry = cls._build_tool_registry(llm_service)
 
+        # --- Agent Layer ---
+        agent_executor = AgentExecutor(
+            tool_registry=tool_registry,
+            llm_service=llm_service,
+            event_bus=event_bus,
+        )
+
         # --- Cleanup scheduler ---
         cleanup = CleanupScheduler(interval_seconds=300)
         for store in [session_store, cache_store]:
@@ -105,6 +117,7 @@ class Container:
             llm_service=llm_service,
             export_service=export_service,
             event_bus=event_bus,
+            agent_executor=agent_executor,
         )
         container.uow_factory = UnitOfWorkFactory(container)
         return container

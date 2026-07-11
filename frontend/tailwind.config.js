@@ -7,46 +7,49 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand palette — "Studio Light"
+        // ── "Warm Paper" palette ──
+        // 暖色调 + 低对比度，柔和简约
         ink: {
-          DEFAULT: '#1E1B18',
-          soft: '#5C5853',
-          muted: '#8C8882',
+          DEFAULT: '#2D2A26',    // 主文字 — 暖黑，非纯黑
+          soft: '#6B6762',       // 次要文字 — 暖灰
+          muted: '#9B9792',      // 辅助文字 — 浅暖灰
         },
         paper: {
-          DEFAULT: '#F7F6F3',
-          dark: '#EEECE7',
+          DEFAULT: '#FAF9F6',    // 页面底色 — 奶油白
+          dark: '#F2F0EC',       // 微偏深的底色
         },
-        surface: '#FFFFFF',
+        surface: {
+          DEFAULT: '#FFFFFF',    // 卡片/面板底色
+        },
         border: {
-          DEFAULT: '#E8E4DE',
-          light: '#F0EDE8',
+          DEFAULT: '#EDEAE5',    // 分割线 — 极淡暖灰
+          light: '#F3F1ED',      // 更淡的分割
         },
-        // Primary — muted steel blue, replacing generic #3b82f6
+        // 柔和石灰色 — 替代原 steel blue
         primary: {
-          50: '#F2F5F8',
-          100: '#E4EAF0',
-          200: '#C5D2DE',
-          300: '#9DB2C6',
-          400: '#7A95AE',
-          500: '#5C7B98',
-          600: '#4A6074',
-          700: '#3C4E5E',
-          800: '#2E3D4A',
-          900: '#202B35',
+          50:  '#F5F4F2',
+          100: '#EBE8E4',
+          200: '#D7D2CC',
+          300: '#B8B1A8',
+          400: '#9A9186',
+          500: '#7D7469',
+          600: '#655D54',
+          700: '#4F4942',
+          800: '#3B3631',
+          900: '#292522',
         },
-        // Signature accent — warm gold
-        gold: {
-          50: '#FCF8F2',
-          100: '#F7EFE1',
-          200: '#EED7B8',
-          300: '#E2BC8A',
-          400: '#D4A55E',
-          500: '#B8944F',
-          600: '#9C7A3E',
-          700: '#7D6132',
-          800: '#5F4A28',
-          900: '#40321D',
+        // 暖琥珀色 — 点缀色，替代原 gold
+        accent: {
+          50:  '#FDF9F3',
+          100: '#F9F0E2',
+          200: '#F1DCBC',
+          300: '#E6C38D',
+          400: '#D8A95E',
+          500: '#C8984E',
+          600: '#A87B3C',
+          700: '#87602E',
+          800: '#664724',
+          900: '#45301A',
         },
       },
       fontFamily: {
@@ -55,39 +58,41 @@ export default {
         mono: ['JetBrains Mono', 'SF Mono', 'Consolas', 'monospace'],
       },
       fontSize: {
-        '2xs': ['0.6875rem', { lineHeight: '1.2' }],
+        '2xs': ['0.6875rem', { lineHeight: '1.3' }],
       },
-      spacing: {
-        '18': '4.5rem',
+      borderRadius: {
+        'xl': '0.75rem',
+        '2xl': '1rem',
+        '3xl': '1.25rem',
       },
       animation: {
-        'pulse-dot': 'pulse-dot 1.4s infinite ease-in-out both',
-        'fade-in': 'fade-in 0.4s ease-out',
+        'fade-in': 'fade-in 0.5s ease-out',
         'slide-up': 'slide-up 0.4s ease-out',
         'slide-in-right': 'slide-in-right 0.3s ease-out',
+        'pulse-soft': 'pulse-soft 2s ease-in-out infinite',
       },
       keyframes: {
-        'pulse-dot': {
-          '0%, 80%, 100%': { transform: 'scale(0)', opacity: '0' },
-          '40%': { transform: 'scale(1)', opacity: '1' },
-        },
         'fade-in': {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
         'slide-up': {
-          '0%': { opacity: '0', transform: 'translateY(12px)' },
+          '0%': { opacity: '0', transform: 'translateY(16px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         'slide-in-right': {
           '0%': { opacity: '0', transform: 'translateX(16px)' },
           '100%': { opacity: '1', transform: 'translateX(0)' },
         },
+        'pulse-soft': {
+          '0%, 100%': { opacity: '0.5' },
+          '50%': { opacity: '1' },
+        },
       },
       boxShadow: {
-        'card': '0 1px 3px rgba(30, 27, 24, 0.04), 0 1px 2px rgba(30, 27, 24, 0.03)',
-        'card-hover': '0 4px 12px rgba(30, 27, 24, 0.06), 0 2px 4px rgba(30, 27, 24, 0.04)',
-        'panel': '0 0 0 1px rgba(30, 27, 24, 0.04), 0 2px 8px rgba(30, 27, 24, 0.06)',
+        'card': '0 1px 2px rgba(45, 42, 38, 0.03), 0 1px 3px rgba(45, 42, 38, 0.02)',
+        'card-hover': '0 2px 8px rgba(45, 42, 38, 0.05), 0 1px 3px rgba(45, 42, 38, 0.03)',
+        'panel': '0 0 0 1px rgba(45, 42, 38, 0.03), 0 4px 16px rgba(45, 42, 38, 0.05)',
       },
     },
   },

@@ -1,81 +1,82 @@
-import { useEffect, useRef } from 'react'
-import { useAgentStore } from '../../stores/agentStore'
-import { AGENT_STAGES } from '../../types'
-import { Sparkles, CheckCircle2 } from 'lucide-react'
+import { Sparkles } from 'lucide-react'
 
-export default function AgentProgress() {
-  const { currentStageIndex } = useAgentStore()
-  const containerRef = useRef<HTMLDivElement>(null)
+const ALL_STAGES = [
+  '读取并理解内容...',
+  '提取关键知识点...',
+  '分析内容结构...',
+  '确认模板选择...',
+  '生成笔记内容...',
+]
 
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight
-    }
-  }, [currentStageIndex])
+interface AgentProgressProps {
+  currentStage: string
+  stageIndex: number
+  isConnected: boolean
+}
+
+export default function AgentProgress({ currentStage, stageIndex, isConnected }: AgentProgressProps) {
+  if (!isConnected && !currentStage) return null
 
   return (
     <div className="animate-fade-in py-8">
       {/* Central indicator */}
-      <div className="mb-10 flex flex-col items-center">
+      <div className="mb-8 flex flex-col items-center">
         <div className="relative mb-4">
-          <div className="absolute inset-0 animate-ping rounded-full bg-gold-200/30" style={{ width: 72, height: 72 }} />
-          <div className="relative flex h-[72px] w-[72px] items-center justify-center rounded-2xl bg-ink shadow-lg">
-            <Sparkles size={28} className="text-gold-400" />
+          <div
+            className="absolute inset-0 animate-pulse-soft rounded-full bg-accent-200/40"
+            style={{ width: 64, height: 64 }}
+          />
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-100">
+            <Sparkles size={24} className="text-primary-500" />
           </div>
         </div>
-        <h3 className="text-base font-semibold text-ink font-display">AI 智能体处理中</h3>
-        <p className="mt-1 text-sm text-ink-muted">正在为您生成高质量的学习笔记</p>
+        <p className="text-sm font-medium text-ink-soft font-display">
+          {currentStage || 'AI Agent 处理中...'}
+        </p>
       </div>
 
-      {/* Stages */}
-      <div ref={containerRef} className="mx-auto max-w-sm space-y-0.5">
-        {AGENT_STAGES.map((stage, i) => {
-          const done = i < currentStageIndex
-          const active = i === currentStageIndex
-
+      {/* Stage list */}
+      <div className="mx-auto max-w-xs space-y-0.5">
+        {ALL_STAGES.map((label, i) => {
+          const done = i < stageIndex
+          const active = i === stageIndex
           return (
             <div
-              key={stage.id}
-              className={`flex items-center gap-3 rounded-xl px-4 py-2.5 transition-all duration-300 ${
-                active ? 'bg-primary-50 border border-primary-100' : ''
+              key={label}
+              className={`flex items-center gap-3 rounded-xl px-4 py-2 transition-all duration-300 ${
+                active ? 'bg-primary-50' : ''
               }`}
             >
               <div className="flex-shrink-0">
                 {done ? (
-                  <CheckCircle2 size={17} className="text-emerald-500" />
-                ) : active ? (
-                  <div className="flex h-4 w-4 items-center justify-center">
-                    <div className="h-2 w-2 animate-pulse rounded-full bg-primary-500" />
+                  <div className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                      <path d="M2 5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
                   </div>
+                ) : active ? (
+                  <div className="h-2 w-2 rounded-full bg-primary-400 animate-pulse-soft" />
                 ) : (
-                  <div className="h-4 w-4 rounded-full border-2 border-border" />
+                  <div className="h-2 w-2 rounded-full bg-border" />
                 )}
               </div>
 
-              <span className={`text-sm font-medium transition-colors ${
-                done ? 'text-emerald-600' : active ? 'text-primary-700' : 'text-ink-muted/40'
+              <span className={`text-xs font-medium transition-colors ${
+                done ? 'text-emerald-600' : active ? 'text-primary-600' : 'text-ink-muted/30'
               }`}>
-                {stage.label}
+                {label}
               </span>
-
-              {active && (
-                <span className="ml-auto flex gap-0.5">
-                  <span className="animate-pulse-dot h-1 w-1 rounded-full bg-primary-400" style={{ animationDelay: '0s' }} />
-                  <span className="animate-pulse-dot h-1 w-1 rounded-full bg-primary-400" style={{ animationDelay: '0.2s' }} />
-                  <span className="animate-pulse-dot h-1 w-1 rounded-full bg-primary-400" style={{ animationDelay: '0.4s' }} />
-                </span>
-              )}
             </div>
           )
         })}
       </div>
 
       {/* Progress bar */}
-      <div className="mx-auto mt-8 max-w-sm">
-        <div className="h-1 overflow-hidden rounded-full bg-border">
+      <div className="mx-auto mt-6 max-w-xs">
+        <div className="h-0.5 overflow-hidden rounded-full bg-border">
           <div
-            className="h-full rounded-full bg-ink transition-all duration-700 ease-out"
-            style={{ width: `${((currentStageIndex + 0.5) / AGENT_STAGES.length) * 100}%` }}
+            className="h-full rounded-full bg-primary-400 transition-all duration-700 ease-out"
+            style={{ width: `${Math.max(5, (stageIndex / ALL_STAGES.length) * 100)}%` }}
           />
         </div>
       </div>
