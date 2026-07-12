@@ -31,6 +31,13 @@ class NoteResponse(BaseModel):
     result: str = Field(..., description="Markdown 格式的生成笔记")
 
 
+class ConfirmRequest(BaseModel):
+    template: str = Field(
+        default="",
+        description="用户确认的模板 ID，空字符串表示使用原始模板",
+    )
+
+
 # ---- 同步端点（兼容旧版） ----
 @router.post("/note", response_model=NoteResponse)
 async def create_note(request: NoteRequest) -> NoteResponse:
@@ -88,6 +95,42 @@ async def create_note_stream(request: NoteRequest):
             content=request.content,
             template_id=request.template,
             session_id=session_id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---- 确认端点（Human-in-the-Loop） ----
+@router.post("/note/confirm/{session_id}")
+async def confirm_note(session_id: str, request: ConfirmRequest):
+    """
+    确认模板选择并恢复 Agent 执行。
+
+    前端在收到 human_confirm_required 事件后调用此端点，
+    传入确认的模板选择，Agent 将继续执行 confirm → generate 节点。
+
+    Returns:
+        SSE 流，包含剩余节点的事件
+    """
+    container = get_container()
+    executor = container.agent_executor
+
+    confirmed_template = request.template if request.template else None
+    if confirmed_template and confirmed_template not in VALID_TEMPLATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的模板 ID '{confirmed_template}'，可选值为: {list(VALID_TEMPLATES)}",
+        )
+
+    return StreamingResponse(
+        executor.resume_stream(
+            session_id=session_id,
+            confirmed_template=confirmed_template,
         ),
         media_type="text/event-stream",
         headers={

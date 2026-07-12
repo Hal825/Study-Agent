@@ -5,11 +5,6 @@ export interface SSEEvent {
   data: Record<string, unknown>
 }
 
-interface UseSSEOptions {
-  onEvent?: (event: SSEEvent) => void
-  onError?: (error: string) => void
-}
-
 export function useSSE() {
   const [isConnected, setIsConnected] = useState(false)
   const [currentStage, setCurrentStage] = useState('')
@@ -19,14 +14,27 @@ export function useSSE() {
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  const connect = useCallback((url: string, body: unknown) => {
-    // Reset state
+  // Human-in-the-loop state
+  const [confirmRequired, setConfirmRequired] = useState(false)
+  const [confirmQuestion, setConfirmQuestion] = useState('')
+  const [confirmOptions, setConfirmOptions] = useState<string[]>([])
+  const [activeSessionId, setActiveSessionId] = useState('')
+
+  /** Reset all processing state before starting a new request */
+  const resetState = useCallback(() => {
     setIsConnected(true)
     setCurrentStage('')
     setStageIndex(0)
     setResult('')
     setIsDone(false)
     setError(null)
+    setConfirmRequired(false)
+    setConfirmQuestion('')
+    setConfirmOptions([])
+  }, [])
+
+  const connect = useCallback((url: string, body: unknown) => {
+    resetState()
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -59,26 +67,26 @@ export function useSSE() {
 
           for (const line of lines) {
             if (line.startsWith('event: ')) {
-              const eventType = line.slice(7).trim()
-              continue  // eslint-disable-line
+              continue
             }
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6))
                 const event: SSEEvent = { type: data.type, data: data.data }
 
-                // Update state based on event type
                 switch (event.type) {
                   case 'agent_start':
                     setCurrentStage('正在启动 Agent...')
                     setStageIndex(0)
+                    if (event.data.session_id) {
+                      setActiveSessionId(event.data.session_id as string)
+                    }
                     break
                   case 'stage_change':
                     setCurrentStage(event.data.stage_label as string)
                     setStageIndex(event.data.stage_index as number)
                     break
                   case 'node_finish':
-                    // Stage already set by stage_change
                     break
                   case 'agent_finish':
                     setResult(event.data.result as string)
@@ -88,6 +96,14 @@ export function useSSE() {
                     break
                   case 'agent_error':
                     setError(event.data.error as string)
+                    setCurrentStage('')
+                    setIsConnected(false)
+                    break
+                  case 'human_confirm_required':
+                    setConfirmRequired(true)
+                    setConfirmQuestion(event.data.question as string)
+                    setConfirmOptions((event.data.options as string[]) || [])
+                    setCurrentStage('')
                     setIsConnected(false)
                     break
                 }
@@ -98,6 +114,12 @@ export function useSSE() {
             }
           }
         }
+
+        // Stream ended without agent_finish — treat as error
+        if (abortRef.current && !controller.signal.aborted) {
+          setError('连接意外中断')
+          setIsConnected(false)
+        }
       })
       .catch((err) => {
         if (err.name !== 'AbortError') {
@@ -105,16 +127,44 @@ export function useSSE() {
           setIsConnected(false)
         }
       })
+  }, [resetState])
 
-    return () => {
-      controller.abort()
-      setIsConnected(false)
-    }
+  // Resume stream after human confirmation
+  const confirmAndResume = useCallback((confirmedTemplate: string) => {
+    if (!activeSessionId) return
+    setConfirmRequired(false)
+    setError(null)
+    connect(`/api/agent/note/confirm/${activeSessionId}`, {
+      template: confirmedTemplate,
+    })
+  }, [activeSessionId, connect])
+
+  const rejectConfirm = useCallback(() => {
+    setConfirmRequired(false)
+    setCurrentStage('')
+    setError('用户取消了笔记生成')
+    setIsConnected(false)
   }, [])
 
   const abort = useCallback(() => {
     abortRef.current?.abort()
     setIsConnected(false)
+    setCurrentStage('')
+  }, [])
+
+  /** Fully reset all state (abort, clear result, go back to input) */
+  const reset = useCallback(() => {
+    abortRef.current?.abort()
+    setIsConnected(false)
+    setCurrentStage('')
+    setStageIndex(0)
+    setResult('')
+    setIsDone(false)
+    setError(null)
+    setConfirmRequired(false)
+    setConfirmQuestion('')
+    setConfirmOptions([])
+    setActiveSessionId('')
   }, [])
 
   return {
@@ -124,7 +174,14 @@ export function useSSE() {
     result,
     isDone,
     error,
+    confirmRequired,
+    confirmQuestion,
+    confirmOptions,
+    activeSessionId,
+    confirmAndResume,
+    rejectConfirm,
     connect,
     abort,
+    reset,
   }
 }

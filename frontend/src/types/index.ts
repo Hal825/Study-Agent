@@ -113,9 +113,10 @@ export interface AgentProcessStage {
 }
 
 export const AGENT_STAGES: AgentProcessStage[] = [
-  { id: 'read', label: '读取并理解内容...' },
+  { id: 'parse', label: '读取并理解内容...' },
   { id: 'extract', label: '提取关键知识点...' },
-  { id: 'organize', label: '组织逻辑结构...' },
+  { id: 'analyze', label: '分析内容结构...' },
+  { id: 'confirm', label: '确认模板选择...' },
   { id: 'generate', label: '生成笔记内容...' },
 ]
 

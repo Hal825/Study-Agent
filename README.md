@@ -1,78 +1,268 @@
-# Phase 1: Data Layer 架构设计文档
+# Study Agent 后端架构文档
 
-> 从 "能用" 到 "线程安全、可观测、可回滚" 的 Data Layer 基础设施。
+> 从入口到每一层：FastAPI + LangGraph + 手动 DI 容器的完整后端剖析。
 
 ---
 
 ## 目录
 
-1. [设计目标](#1-设计目标)
-2. [整体架构](#2-整体架构)
-3. [异常体系](#3-异常体系)
-4. [BaseMemoryStore —— Runtime 基类](#4-basememorystore--runtime-基类)
-5. [BaseBusinessRepository —— Business 基类](#5-basebusinessrepository--business-基类)
-6. [过期数据清理机制](#6-过期数据清理机制)
-7. [UnitOfWork —— 跨存储事务](#7-unitofwork--跨存储事务)
-8. [DI Container](#8-di-container)
-9. [并发模型](#9-并发模型)
-10. [测试验证](#10-测试验证)
-11. [待演进项](#11-待演进项)
+1. [整体分层架构](#1-整体分层架构)
+2. [入口点 —— main.py](#2-入口点--mainpy)
+3. [依赖注入容器 —— container.py](#3-依赖注入容器--containerpy)
+4. [Data Layer —— 数据层](#4-data-layer--数据层)
+5. [LLM Layer —— LLM 客户端层](#5-llm-layer--llm-客户端层)
+6. [Prompt Layer —— Prompt 层](#6-prompt-layer--prompt-层)
+7. [Tool Layer —— 工具层](#7-tool-layer--工具层)
+8. [Agent Layer —— Agent 层](#8-agent-layer--agent-层)
+9. [Service Layer —— 服务层](#9-service-layer--服务层)
+10. [API Layer —— API 层](#10-api-layer--api-层)
+11. [完整请求链路](#11-完整请求链路)
+12. [设计亮点总结](#12-设计亮点总结)
+13. [文件清单](#13-文件清单)
 
 ---
 
-## 1. 设计目标
-
-Phase 1 的数据层解决四个基底问题：
-
-| 问题 | 现状（优化前） | 目标（优化后） |
-|------|---------------|---------------|
-| **并发安全** | 纯字典操作，asyncio 下无锁。Agent 图节点并发执行时存在数据竞争 | `asyncio.Lock` 保护每个读写操作，10 并发 writer 验证通过 |
-| **异常不可追踪** | 原生 `KeyError` / `IndexError` 直接抛出，无法区分 "不存在" 和 "存储挂了" | 5 级异常树，每条异常携带 `store_name` + `operation` + `detail` |
-| **过期数据泄漏** | TTL 仅惰性清理（get 时检查），永不访问的 key 永久驻留内存 | 后台 `CleanupScheduler` 每 5 分钟主动扫描清除 |
-| **跨存储无事务** | Agent 同时写 Checkpoint + Note，一个成功一个失败时数据不一致 | `UnitOfWork` 补偿事务：成功提交，失败 LIFO 逆序回滚 |
-
----
-
-## 2. 整体架构
+## 1. 整体分层架构
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     DI Container                              │
-│  checkpoint_store  session_store  cache_store               │
-│  note_repo         user_pref_repo                           │
-│  cleanup_scheduler  uow_factory                              │
-│  llm_service       export_service  event_bus                │
-└──────────────────────────────────────────────────────────────┘
-         │                │                  │
-         ▼                ▼                  ▼
-┌─────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Runtime Store   │ │ Business Repo│ │  Infrastructure   │
-│                 │ │              │ │                  │
-│ BaseMemoryStore │ │BaseBusiness  │ │ CleanupScheduler │
-│  ├─ Checkpoint  │ │ Repository   │ │ UnitOfWorkFactory│
-│  ├─ Session     │ │  ├─ Note     │ │                  │
-│  └─ Cache       │ │  └─ User     │ │                  │
-└────────┬────────┘ └──────┬───────┘ └──────────────────┘
-         │                 │
-         ▼                 ▼
-┌──────────────────────────────────────────────────────────────┐
-│                   exceptions.py                               │
-│  StorageError → NotFound / Write / Connection / Timeout /     │
-│                 Integrity                                     │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  API Layer (api/)          HTTP 端点             │
+├─────────────────────────────────────────────────┤
+│  Agent Layer (agent/)      LangGraph 状态图       │
+├─────────────────────────────────────────────────┤
+│  Service Layer (services/)  业务服务              │
+├──────────────────┬──────────────────────────────┤
+│  Tool Layer      │  Prompt Layer                │
+│  (tools/)        │  (prompts/)                  │
+├──────────────────┴──────────────────────────────┤
+│  LLM Layer (llm/)  DeepSeek Client              │
+├─────────────────────────────────────────────────┤
+│  Data Layer (data/)  存储 + 仓库                 │
+└─────────────────────────────────────────────────┘
 ```
 
 ### 分层职责
 
-| 层 | 职责 | 生命周期 |
+| 层 | 职责 | 依赖方向 |
 |----|------|---------|
-| **Runtime Store** | Checkpoint 快照、会话状态、热点缓存 | 单次会话 / 单次 Agent 执行，可丢失 |
-| **Business Repository** | 用户笔记、偏好设置 | 跨会话持久化，不可丢失 |
-| **Infrastructure** | 后台清理、跨存储事务协调 | 与应用生命周期一致 |
+| **API** | 请求校验、HTTP 响应构造、SSE 流式推送 | → Agent / Service |
+| **Agent** | LangGraph 状态图编排，5 节点流水线 | → Tool / Service / Prompt |
+| **Service** | LLM 调用、文档导出、事件总线 | → LLM / Data |
+| **Tool** | 原子操作：内容解析、实体提取、结构分析 | → LLM Service |
+| **Prompt** | 模板加载、变量填充、兼容层 | — |
+| **LLM** | DeepSeek API 客户端封装 | — |
+| **Data** | Runtime 临时存储 + Business 持久化 | — |
 
-### 接口-实现分离
+每层只依赖下一层的抽象接口，不依赖具体实现。
 
-每个存储模块都遵循 "接口先行" 模式：
+---
+
+## 2. 入口点 —— main.py
+
+路径：`backend/app/main.py`
+
+### 启动流程
+
+```
+1. load_dotenv()           → 加载 ../../.env (DEEPSEEK_API_KEY 等)
+2. lifespan 启动:
+   a. get_container()      → 创建全局 DI 容器
+   b. 打印可用模型
+   c. cleanup_scheduler.start() → 启动后台清理（每 300s）
+3. FastAPI 应用:
+   a. CORS 中间件 (允许 localhost:5173)
+   b. 挂载路由: agent_router + export_router
+4. lifespan 关闭:
+   a. cleanup_scheduler.stop()
+```
+
+### 环境变量
+
+| 变量 | 用途 | 默认值 |
+|------|------|--------|
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | —（必须设置） |
+| `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com` |
+| `DEEPSEEK_MODEL` | 默认模型 | `deepseek-chat` |
+
+### 路由一览
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `GET` | `/api/health` | 健康检查 |
+| `POST` | `/api/agent/note` | 同步生成笔记 |
+| `POST` | `/api/agent/note/stream` | SSE 流式生成笔记 |
+| `POST` | `/api/export` | 导出 DOCX/PDF |
+
+---
+
+## 3. 依赖注入容器 —— container.py
+
+路径：`backend/app/container.py`
+
+### Container 数据类
+
+持有全部服务实例（手动 DI，无框架依赖）：
+
+| 领域 | 实例 | 类型（接口） | 职责 |
+|------|------|-------------|------|
+| Runtime Data | `checkpoint_store` | `CheckpointStore` | LangGraph checkpoint 持久化 |
+| Runtime Data | `session_store` | `SessionStore` | 会话临时状态 |
+| Runtime Data | `cache_store` | `CacheStore` | LLM 响应缓存 |
+| Business Data | `note_repo` | `NoteRepository` | 笔记 CRUD |
+| Business Data | `user_pref_repo` | `UserPreferenceRepository` | 用户偏好 |
+| Infrastructure | `cleanup_scheduler` | `CleanupScheduler` | 后台过期清理 |
+| Infrastructure | `uow_factory` | `UnitOfWorkFactory` | 工作单元工厂 |
+| Tool | `tool_registry` | `IToolRegistry` | Tool 注册中心 |
+| Prompt | `prompt_registry` | `PromptRegistry` | Prompt 模板注册中心 |
+| Service | `llm_service` | `LLMService` | LLM 调用 |
+| Service | `export_service` | `ExportService` | 文档导出 |
+| Service | `event_bus` | `EventBus` | SSE 事件推送 |
+| Agent | `agent_executor` | `AgentExecutor` | LangGraph 执行器 |
+
+### 创建流程 `create_dev()`
+
+```
+1. new MemoryCheckpointStore()
+2. new MemorySessionStore()
+3. new MemoryCacheStore()
+4. new MemoryNoteRepository()
+5. new MemoryUserPreferenceRepository()
+6. new LLMService(cache=cache_store)        ← 注入缓存
+7. new ExportService()
+8. new EventBus()
+9. _build_prompt_registry()                 ← 从 templates/ 加载 .md
+10. _build_tool_registry(llm_service)       ← 注册 3 个 Tool
+11. new AgentExecutor(tool_registry, llm_service, event_bus)
+12. new CleanupScheduler(300s)              ← 注册 session/cache store
+13. 组装成 Container 实例
+```
+
+### 子工厂方法
+
+```python
+_build_tool_registry(llm_service):
+    reg = ToolRegistry()
+    reg.register(ContentParser())            # 纯本地
+    reg.register(EntityExtractor(llm))       # LLM 驱动
+    reg.register(StructureAnalyzer(llm))     # 混合模式
+
+_build_prompt_registry():
+    templates_dir = "app/prompts/templates"
+    return PromptRegistry(templates_dir)     # 加载 templates/note/*.md
+```
+
+### 单例模式
+
+模块级 `_container` + `get_container()` 惰性初始化，保证环境变量在 `load_dotenv()` 之后才被读取。测试可通过 `set_container()` 注入 mock 容器。
+
+---
+
+## 4. Data Layer —— 数据层
+
+### 4.1 抽象接口：`data/interfaces.py`
+
+定义所有存储的抽象接口，上层只依赖这些 ABC：
+
+| 接口 | 用途 | 核心方法 |
+|------|------|---------|
+| `CheckpointStore` | LangGraph checkpoint | `put`, `get`, `get_by_id`, `list_checkpoints`, `delete_thread` |
+| `SessionStore` | 会话临时 KV | `get`, `set(key, value, ttl)`, `delete`, `clear_session` |
+| `CacheStore` | 热点数据缓存 | `get`, `set(key, value, ttl)`, `delete`, `exists` |
+| `NoteRepository` | 笔记 CRUD | `save`, `get`, `list_by_user`, `delete`, `count_by_user` |
+| `UserPreferenceRepository` | 用户偏好 | `get`, `update`, `reset` |
+
+同时定义数据模型：
+
+```python
+class CheckpointEntry(BaseModel):
+    thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id,
+    channel_values, metadata
+
+class StudyNote(BaseModel):
+    id, user_id, title, template, content, source_content, created_at
+
+class UserPreference(BaseModel):
+    user_id, preferred_template, preferred_depth, language,
+    enable_auto_save, metadata
+```
+
+### 4.2 异常体系：`data/exceptions.py`
+
+```
+StorageError (根异常，携带 store_name / operation / detail)
+├── StoreNotFoundError      → get/delete 找不到数据（非系统故障）
+├── StoreWriteError         → put/set/save 失败
+├── StoreConnectionError    → 外部存储不可达（生产环境预留）
+├── StoreTimeoutError       → 操作超时
+└── StoreIntegrityError     → 数据完整性约束违反
+```
+
+设计原则：
+- **分层语义，逐级具体**：上层可以 `except StorageError`（最粗）或 `except StoreNotFoundError`（最细）
+- **链路保留**：`raise StoreNotFoundError(...) from e`，栈追踪不中断
+
+### 4.3 Runtime 存储基类：`data/runtime/base.py`
+
+`BaseMemoryStore` — 模板方法模式，子类只需覆写钩子方法：
+
+```
+对外暴露 (带锁 + 日志 + 异常):
+  get() → _get_impl()
+  set() → _set_impl()
+  delete() → _delete_impl()
+  clear() → _clear_impl()
+  cleanup() → _cleanup_expired()
+```
+
+**`_locked_context` 核心机制**：
+
+```python
+@asynccontextmanager
+async def _locked_context(self, operation, key):
+    start = time.perf_counter()
+    async with self._lock:       # asyncio.Lock 互斥
+        yield                    # 执行子类实现
+    elapsed = ...                # 记录耗时
+    if elapsed > 100ms → WARNING (慢操作告警)
+    elif elapsed > 10ms → DEBUG
+```
+
+### 4.4 具体实现
+
+**`MemoryCheckpointStore`**：
+- 数据结构：`thread_id → ns → list[CheckpointEntry]`
+- `put`：追加或覆盖（同名 checkpoint_id 替换）
+- `get`：返回最新一条
+
+**`MemorySessionStore`**：
+- 数据结构：`session_id → key → (value, expires_at)`
+- 双重 TTL 清理：惰性清理（get 时）+ 主动清理（`_cleanup_expired` 全量扫描）
+
+**`MemoryCacheStore`**：
+- 数据结构：`key → (value, expires_at)`
+- 同样支持 TTL + 双轨清理
+
+### 4.5 Business 存储基类：`data/business/base.py`
+
+`BaseBusinessRepository[ModelT]` — 泛型基类，和 BaseMemoryStore 同样的模式：
+
+| 方法 | 子类钩子 |
+|------|---------|
+| `save(model) → id` | `_save_impl(model) → id` |
+| `get(entity_id) → ModelT` | `_get_impl(entity_id) → ModelT` |
+| `delete(entity_id) → bool` | `_delete_impl(entity_id) → bool` |
+| `list_by_user(user_id, limit, offset)` | `_list_impl(...)` |
+| `count_by_user(user_id) → int` | `_count_impl(user_id) → int` |
+
+**`MemoryNoteRepository`**：
+- ID 生成：`note_{timestamp}_{hash}`
+- `list_by_user`：按 `created_at` 倒序、分页
+
+**`MemoryUserPreferenceRepository`**：
+- `get` 不存在时自动返回默认 `UserPreference`
+- `update`：部分更新（merge 现有值）
+
+### 4.6 接口-实现分离
 
 ```
 interfaces.py          ← 抽象接口（上层依赖）
@@ -82,544 +272,589 @@ interfaces.py          ← 抽象接口（上层依赖）
 runtime/session_store.py  ← 具体实现（容器注入时选择）
 ```
 
-上层代码（Agent、API）永远只 import `interfaces.py`，不感知底层是内存还是 Redis/PostgreSQL。切换存储后端只需改 `Container.create_xxx()` 工厂方法。
+上层代码（Agent、API）永远只 import `interfaces.py`，不感知底层是内存还是 Redis/PostgreSQL。切换存储后端只需改 `Container` 工厂方法。
+
+### 4.7 UnitOfWork：`data/unit_of_work.py`
+
+**补偿事务模式**，保证跨存储写入的原子性：
+
+```
+async with UnitOfWork.from_container(container) as uow:
+    await uow.save_checkpoint(...)   # 写入 + 注册补偿: remove
+    await uow.save_note(note)        # 写入 + 注册补偿: delete
+# 正常退出 → 补偿丢弃
+# 异常退出 → LIFO 逆序执行补偿
+```
+
+核心实现：
+
+```python
+async def __aexit__(self, exc_type, exc_val, exc_tb):
+    if exc_type is not None:
+        await self._rollback()       # 逆序执行所有补偿
+    else:
+        self._compensations.clear()  # 丢弃补偿
+    return False                     # 不吞异常
+```
+
+补偿失败**不阻断**后续补偿，单个补偿异常不影响其他补偿执行。
+
+### 4.8 CleanupScheduler：`data/cleanup.py`
+
+解决惰性清理导致过期数据永驻内存的问题：
+
+```
+主动扫描（CleanupScheduler）      惰性清理（get 时触发）
+         │                               │
+         ▼                               ▼
+  每 300s 遍历全部数据           访问时检查 expires_at
+  批量清除过期条目               单条删除
+         │                               │
+         └───────────┬───────────────────┘
+                     ▼
+           保证过期数据最终被清除
+```
+
+设计决策：
+- `asyncio.sleep` 而非 `time.sleep`：不阻塞 event loop
+- 异常隔离：单个 store 清理失败不影响其他
+- `run_once()` 手动触发接口用于调试
 
 ---
 
-## 3. 异常体系
+## 5. LLM Layer —— LLM 客户端层
 
-路径：`backend/app/data/exceptions.py`
+### 5.1 旧版兼容模块：`llm/deepseek.py`
 
-### 设计原则
+模块级单例 `_client`，惰性初始化。`generate_note(content, template_id)` 直接调用 DeepSeek。**已被 `services/llm_service.py` 取代**，保留用于兼容。
 
-**分层语义，逐级具体。** 上层可以按粒度选择捕获范围：
+### 5.2 新版统一 LLM 服务：`services/llm_service.py`
+
+核心架构：
+
+```
+BaseLLMProvider (ABC)          ← Provider 抽象
+    └── DeepSeekProvider       ← OpenAI 兼容接口
+
+LLMService                     ← 统一入口
+    ├── 管理多个 Provider
+    ├── 请求缓存（MD5 → CacheStore）
+    └── 统一接口 generate(LLMRequest)
+```
+
+**数据类型**：
 
 ```python
-# 捕获所有存储错误（最粗）
-except StorageError: ...
+LLMRequest:
+    system_prompt, user_message, model, temperature(0.7), max_tokens(4096)
 
-# 只捕获"数据不存在"（最细）
-except StoreNotFoundError: ...
+LLMResponse:
+    content, model, usage({prompt/completion/total_tokens}),
+    duration_ms, cached(bool)
 ```
 
-### 异常树
-
-```
-StorageError                     # 根异常
-├── StoreNotFoundError           # 数据不存在（非系统故障）
-├── StoreWriteError              # 写入失败
-├── StoreConnectionError         # 连接失败（仅生产环境，内存实现不抛出）
-├── StoreTimeoutError            # 操作超时
-└── StoreIntegrityError          # 数据完整性约束违反（UnitOfWork 回滚时）
-```
-
-### 异常结构
-
-每个异常实例携带三个诊断字段：
+**缓存机制**：
 
 ```python
-class StorageError(Exception):
-    store_name: str    # 哪个 store 抛出的，如 "MemorySessionStore"
-    operation: str     # 什么操作，如 "get" / "set" / "save"
-    detail: str        # 原始错误信息，用于调试
+cache_key = f"llm:{md5(model + system[:200] + user[:200])}"
+# 命中 → 直接返回，设置 cached=True
+# 未命中 → 调用 provider → 写入缓存 (TTL=300s)
 ```
 
-### 使用示例
+**Provider 解析**：根据 model 名匹配 provider（`deepseek-chat` → `DeepSeekProvider`）
 
-```python
-# BaseMemoryStore._locked_context 在生产代码中自动封装
-try:
-    result = await self._get_impl(key)
-except Exception as e:
-    raise StoreNotFoundError(
-        f"[{self._store_name}] 读取失败: key={key}",
-        store_name=self._store_name,
-        operation="get",
-        detail=str(e),
-    ) from e
-```
-
-链路保留 (`from e`) 意味着栈追踪不会断裂，调试时可以看到完整的异常传播路径。
+**`generate_legacy()`**：兼容旧版，返回纯字符串而非 `LLMResponse`
 
 ---
 
-## 4. BaseMemoryStore —— Runtime 基类
+## 6. Prompt Layer —— Prompt 层
 
-路径：`backend/app/data/runtime/base.py`
-
-### 动机
-
-三个 Runtime store（Checkpoint / Session / Cache）在优化前各自独立实现，存在三类重复：
-
-1. **锁逻辑重复**：每个方法都要手写 `async with self._lock:`
-2. **日志逻辑缺失**：无法追踪哪个 store 在什么时候做了什么操作
-3. **异常处理缺失**：原生异常直接穿透到上层
-
-### 核心设计
+### 6.1 数据模型：`prompts/schemas.py`
 
 ```python
-class BaseMemoryStore:
-    def __init__(self, name: str = ""):
-        self._lock = asyncio.Lock()          # 全局互斥锁
-        self._store_name = name              # 日志标识
-        self._logger = logging.getLogger(...) # 专用 logger
+class PromptTemplate(BaseModel):
+    key: str          # 模板键，如 "note/outline"
+    version: str      # 模板版本
+    description: str  # 模板用途描述
+    content: str      # 模板文本内容
 ```
 
-### 子类覆写点
+### 6.2 注册中心：`prompts/registry.py` — `PromptRegistry`
 
-| 方法 | 子类职责 | 父类提供 |
-|------|---------|---------|
-| `_get_impl(key)` | 返回 key 对应的值 | 锁 + 日志 + 异常封装 |
-| `_set_impl(key, value)` | 写入 key-value | 同上 |
-| `_delete_impl(key)` | 删除 key | 同上 |
-| `_clear_impl()` | 清空全部数据 | 同上 |
-| `_cleanup_expired()` | 清理过期数据，返回条数 | 同上 |
+- 从 `templates/` 目录递归加载 `.md` 文件
+- Key 规则：`templates/note/outline.md` → `"note/outline"`
+- 全局单例模式（`_instance`）
+- `reload()` 支持热更新
 
-父类对外暴露的 `get()` / `set()` / `delete()` / `clear()` / `cleanup()` 方法封装了完整的**锁获取 → 耗时记录 → 异常转换**链路。
+### 6.3 构造器：`prompts/builder.py` — `PromptBuilder`
 
-### _locked_context —— 核心机制
+纯字符串操作：将模板中 `{variable}` 替换为实际值，缺失变量时抛 `ValueError`。
 
 ```python
-@asynccontextmanager
-async def _locked_context(self, operation: str, key: str):
-    start = time.perf_counter()
-    async with self._lock:          # 互斥锁
-        try:
-            yield                   # 执行子类实现
-        finally:
-            elapsed = (time.perf_counter() - start) * 1000
-            if elapsed > 100:       # 慢操作告警
-                self._logger.warning(f"[{operation}] key={key} 耗时 {elapsed:.0f}ms")
-            elif elapsed > 10:      # 正常操作，DEBUG 级别
-                self._logger.debug(f"[{operation}] key={key} 耗时 {elapsed:.0f}ms")
+PromptBuilder.build("你好 {name}", name="世界")  # → '你好 世界'
+PromptBuilder.build("你好 {name}")               # → ValueError: 模板缺失变量: ['name']
 ```
 
-三层设计：
-
-- `>100ms`：WARNING 级别 —— 生产环境触发告警
-- `10ms~100ms`：DEBUG 级别 —— 本地开发可追踪
-- `<10ms`：静默 —— 避免日志洪水
-
-**为什么用 asyncio.Lock 而非 threading.Lock？** 我们这个项目全部跑在 asyncio event loop 里，Agent 图节点、Tool 执行、SSE 推送都是协程。`threading.Lock` 会阻塞整个 event loop，切换到 `asyncio.Lock` 让其他协程在锁释放前可以继续跑不相关的任务。
-
-### 参数化策略
-
-所有子类构造时传入 `name` 参数，自动生成独立的 logger 实例：
+### 6.4 笔记模板兼容层：`prompts/note.py`
 
 ```python
-# Session store 的日志
-logger = logging.getLogger("data.runtime.MemorySessionStore")
+VALID_TEMPLATES = {"outline", "summary", "cornell", "qa"}
+NOTE_PROMPTS = _load_note_prompts()  # 延迟从 PromptRegistry 加载
+````
 
-# Cache store 的日志
-logger = logging.getLogger("data.runtime.MemoryCacheStore")
-```
-
-这样在生产环境可以通过 logging 配置按 store 粒度设置日志级别。
+4 个模板文件：`templates/note/{outline,synopsis,cornell,qa}.md`
 
 ---
 
-## 5. BaseBusinessRepository —— Business 基类
+## 7. Tool Layer —— 工具层
 
-路径：`backend/app/data/business/base.py`
+### 7.1 抽象基类：`tools/base.py` — `BaseTool[InputT, OutputT]`
 
-### 与 BaseMemoryStore 的差异
-
-| 维度 | BaseMemoryStore | BaseBusinessRepository |
-|------|----------------|----------------------|
-| 数据结构 | Key-Value | 实体模型（Pydantic） |
-| 操作语义 | get/set/delete | save/get/delete/list/count |
-| 分页支持 | 无 | limit + offset |
-| 锁粒度 | 每个 KV 操作 | 每个 CRUD 操作 |
-| 泛型 | 无 | `Generic[ModelT]`，类型安全 |
-
-### 泛型设计
-
-```python
-ModelT = TypeVar("ModelT", bound=BaseModel)
-
-class BaseBusinessRepository(Generic[ModelT]):
-    async def _save_impl(self, model: ModelT) -> str: ...
-    async def _get_impl(self, entity_id: str) -> Optional[ModelT]: ...
-    async def _list_impl(self, user_id: str, limit: int, offset: int) -> list[ModelT]: ...
-```
-
-子类继承时绑定具体类型：
-
-```python
-class MemoryNoteRepository(BaseBusinessRepository[StudyNote], NoteRepository):
-    ...
-```
-
-### UserPreferenceRepository 的特殊处理
-
-`UserPreferenceRepository` 的接口不是标准实体 CRUD（它用 `user_id` 而非 `entity_id`，有 `update` 和 `reset` 方法），因此它：
-- 继承 `BaseBusinessRepository[UserPreference]` 复用锁 + 日志
-- 覆写所有的 `_xxx_impl` 方法供基类调用
-- 但对外暴露的方法 (`get` / `update` / `reset`) 直接使用 `self._locked_context()`，不走基类的标准 CRUD 模板
-
-这是 **"Template Method Pattern 允许子类选择性地走模板或直通底层"** 的设计。
-
----
-
-## 6. 过期数据清理机制
-
-路径：`backend/app/data/cleanup.py`
-
-### 问题
-
-优化前，MemorySessionStore 和 MemoryCacheStore 的 TTL 过期只在 `get()` 触发时**惰性清理**：
+**模板方法模式**，子类只需定义 schema 并实现 `execute()`：
 
 ```
-set(key, value, ttl=600)  →  写入，expires_at = now + 600s
-... 600s 后 ...
-get(key)                   →  发现过期，删除，返回 None  ✅
-... key 再也没被访问 ...
-                            →  永久残留！ ❌
+run(dict | InputT) → ToolResult[OutputT]
+  ├── 1. input 自动解析 (dict → Pydantic)
+  ├── 2. before_run() 钩子
+  ├── 3. validate() 异步业务校验钩子
+  ├── 4. execute() 核心逻辑 (带超时 + 重试 + 间隔)
+  ├── 5. after_run() 或 on_error() 钩子
+  └── 6. 返回 ToolResult
 ```
 
-这在 Agent 场景下很致命：一次 Agent 执行会创建数十个临时 session key，如果用户刷新页面重来，旧 key 没人访问，就永远占着内存。
-
-### 方案：双轨清理
-
-```
-主动扫描（CleanupScheduler）         惰性清理（get 时触发）
-         │                                  │
-         ▼                                  ▼
-  每 300s 遍历全部数据              访问时检查 expires_at
-  批量清除过期条目                  单条删除
-         │                                  │
-         └──────────┬───────────────────────┘
-                    ▼
-             保证过期数据最终被清除
-```
-
-### CleanupScheduler 实现
-
-```python
-class CleanupScheduler:
-    def __init__(self, interval_seconds: int = 300):
-        self._interval = interval_seconds
-        self._stores: list[BaseMemoryStore] = []   # 注册的存储
-        self._task: Optional[asyncio.Task] = None  # 后台协程
-```
-
-核心循环：
-
-```python
-async def _loop(self):
-    while self._running:
-        await asyncio.sleep(self._interval)
-        for store in self._stores:
-            try:
-                count = await store.cleanup()       # 每个 store 独立清理
-                if count > 0:
-                    logger.info(f"[{store.store_name}] cleaned {count}")
-            except Exception as e:
-                logger.error(f"cleanup failed for {store.store_name}: {e}")
-                # 不抛出，继续处理下一个 store
-```
-
-关键设计决策：
-
-1. **`asyncio.sleep` 而非 `time.sleep`**：不阻塞 event loop，其他协程可以继续运行
-2. **异常隔离**：单个 store 清理失败不影响其他 store 的清理
-3. **手动触发接口**：`run_once()` 返回 `{store_name: count}` 字典，调试用
-
-### 清理策略对比
-
-| 维度 | 惰性清理 | 主动扫描 |
-|------|---------|---------|
-| 触发时机 | get() 时 | 定时器 |
-| 清理范围 | 单 key | 全部数据 |
-| 时间复杂度 | O(1) 平摊 | O(n) 全量 |
-| 内存回收保证 | 否（依赖访问） | 是 |
-
-### 生命周期管理
-
-```python
-# main.py lifespan
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    container = get_container()
-    await container.cleanup_scheduler.start()   # 启动后台任务
-    yield
-    await container.cleanup_scheduler.stop()     # 取消后台任务
-```
-
----
-
-## 7. UnitOfWork —— 跨存储事务
-
-路径：`backend/app/data/unit_of_work.py`
-
-### 问题场景
-
-Agent 生成笔记的执行路径涉及两个存储：
-
-```
-1. CheckpointStore.put()  ← Runtime，标记 Agent 进度
-2. NoteRepository.save()  ← Business，持久化结果
-
-场景：步骤 1 成功，步骤 2 失败（如 LLM 返回空内容）
-结果：checkpoint 已写入但笔记没保存 → 数据不一致
-```
-
-### 方案：补偿事务（Compensating Transaction）
-
-不追求 ACID 事务（内存实现做不到），而是用 **"补偿"** 模式：
-
-> 每个写操作同时注册一个反向操作（补偿函数）。正常退出时补偿丢弃；异常退出时按 LIFO 逆序执行补偿。
-
-```
-正常流程：
-  save_checkpoint → 注册补偿: remove_checkpoint
-  save_note        → 注册补偿: delete_note
-  __aexit__(exc_type=None) → 丢弃所有补偿 ✓
-
-异常流程：
-  save_checkpoint → 注册补偿: remove_checkpoint
-  save_note        → ... 抛出异常
-  __aexit__(exc_type=RuntimeError) → 逆序执行补偿:
-    1. delete_note        (先注册的后执行)
-    2. remove_checkpoint  (后注册的先执行)
-```
-
-### 核心实现
-
-```python
-class UnitOfWork:
-    async def __aenter__(self) -> "UnitOfWork":
-        self._compensations.clear()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
-        if exc_type is not None:
-            await self._rollback()      # 逆序执行补偿
-        else:
-            self._compensations.clear()  # 丢弃补偿
-        return False  # 不吞异常
-```
-
-### 补偿注册
-
-```python
-async def save_note(self, note: StudyNote) -> str:
-    note_id = await self.note_repo.save(note)
-
-    # 注册补偿：如果后续失败，删除这条笔记
-    async def compensate():
-        await self.note_repo.delete(note_id)
-
-    self._register(compensate)
-    return note_id
-```
-
-### 失败处理
-
-单个补偿函数执行失败**不会阻断**后续补偿：
-
-```python
-async def _rollback(self):
-    for compensation in reversed(self._compensations):
-        try:
-            await compensation()
-        except Exception as e:
-            self._logger.error(f"Compensation FAILED: {e}")
-            # 继续执行下一个补偿，不抛出
-```
-
-### 工厂模式
-
-通过 `UnitOfWorkFactory` 持有容器引用，上层只需一行代码：
-
-```python
-async with container.uow_factory.create() as uow:
-    await uow.save_checkpoint(...)
-    note_id = await uow.save_note(note)
-```
-
-### 局限性（Phase 1）
-
-- 仅支持 CheckpointStore + NoteRepository 两种操作的补偿
-- 补偿是"尽力而为"，不是严格原子性（一个补偿失败不影响其他补偿执行）
-- 不处理并发冲突（两个 UoW 同时操作同一个 note）
-
-这些在切换到 PostgreSQL 后可以通过数据库事务自然解决。
-
----
-
-## 8. DI Container
-
-路径：`backend/app/container.py`
-
-### 设计
+**`ToolResult`**：
 
 ```python
 @dataclass
-class Container:
-    # Runtime
-    checkpoint_store: CheckpointStore
-    session_store: SessionStore
-    cache_store: CacheStore
-
-    # Business
-    note_repo: NoteRepository
-    user_pref_repo: UserPreferenceRepository
-
-    # Infrastructure
-    cleanup_scheduler: CleanupScheduler
-    uow_factory: UnitOfWorkFactory
-
-    # Services
-    llm_service: LLMService
-    export_service: ExportService
-    event_bus: EventBus
+class ToolResult(Generic[OutputT]):
+    status: ToolStatus  # SUCCESS / VALIDATION_ERROR / EXECUTION_ERROR / TIMEOUT
+    data: Optional[OutputT]
+    error: Optional[str]
+    duration_ms: float
 ```
 
-### 工厂方法
+**可配置属性**：
+
+| 属性 | 默认值 | 用途 |
+|------|--------|------|
+| `timeout_seconds` | 30.0 | 超时时间 |
+| `retry_count` | 0 | 重试次数 |
+| `retry_delay_seconds` | 0.0 | 重试间隔 |
+
+**子类必须定义**：`name`, `description`, `input_schema`, `output_schema`, `execute()`
+
+**可覆写钩子**：`before_run()`, `after_run()`, `on_error()`, `validate()`
+
+### 7.2 注册中心：`tools/registry.py` — `ToolRegistry`
+
+字典存储，按 name 去重。实现 `IToolRegistry` 接口：
 
 ```python
-@classmethod
-def create_dev(cls) -> "Container":
-    """开发环境：全部使用内存实现"""
-    checkpoint_store = MemoryCheckpointStore()
-    session_store = MemorySessionStore()
-    cache_store = MemoryCacheStore()
-    ...
-
-@classmethod
-def create_prod(cls) -> "Container":
-    """生产环境：Redis + PostgreSQL（待实现）"""
-    checkpoint_store = RedisCheckpointStore(REDIS_URL)
-    session_store = RedisSessionStore(REDIS_URL)
-    cache_store = RedisCacheStore(REDIS_URL)
-    note_repo = PostgresNoteRepository(DATABASE_URL)
-    ...
+reg = ToolRegistry()
+reg.register(ContentParser())
+tool = reg.get("content_parser")
 ```
 
-### 单例管理
+### 7.3 三个具体 Tool
+
+| Tool | 类型 | 驱动 | 超时 | 重试 | 职责 |
+|------|------|------|------|------|------|
+| `ContentParser` | 纯本地 | 正则 | 5s | 0 | 解析 Markdown → 标题/章节/字数/语言 |
+| `EntityExtractor` | LLM | DeepSeek | 60s | 1 | 提取知识实体（概念/术语/人物/公式） |
+| `StructureAnalyzer` | 混合 | 本地+LLM | 60s | 1 | 层次深度(本地) + 核心主题/大纲(LLM) |
+
+### ContentParser 细节
+
+- 逐行扫描 `#`/`##`/`###` 标题
+- 用 `_collect_section_content()` 收集每个标题下的正文
+- 字数统计：中文字符 + 英文单词（正则 `[一-鿿]` + `[a-zA-Z]+`）
+- 语言检测：比较中英字符比例
+
+### EntityExtractor 细节
+
+- 截断内容到 8000 字符
+- 附带章节摘要（前 10 个标题）
+- `temperature=0.3` 追求稳定输出
+- JSON 解析失败时降级返回空结果
+- `_extract_json()` 处理 markdown code block 包裹
+
+### StructureAnalyzer 细节
+
+- 本地计算层次深度和复杂度（基于字数 + 章节层级）
+- LLM 只分析前 3000 字符
+- 降级策略：LLM 解析失败时用本地估算值填充全部字段
+
+---
+
+## 8. Agent Layer —— Agent 层
+
+### 8.1 状态定义：`agent/state.py` — `NoteAgentState`
+
+LangGraph 的 State Schema（TypedDict），贯穿 5 个节点：
 
 ```python
-_container: Container | None = None
+class NoteAgentState(TypedDict, total=False):
+    # 用户输入
+    content: str
+    template_id: str
+    session_id: str
 
-def get_container() -> Container:
-    global _container
-    if _container is None:
-        _container = Container.create_dev()
-    return _container
+    # ContentParser 产出
+    parsed_title: str
+    parsed_sections: list[SectionInfo]
+    parsed_total_words: int
+    parsed_language: str
+
+    # EntityExtractor 产出
+    entities: list[EntityInfo]
+    key_concepts: list[str]
+
+    # StructureAnalyzer 产出
+    content_type: str
+    hierarchy_depth: int
+    main_topics: list[TopicInfo]
+    suggested_outline: list[OutlineItem]
+    complexity: str
+    estimated_study_time_minutes: int
+
+    # 最终输出
+    generated_note: str
+
+    # 控制字段
+    stage: str
+    error: str
+    human_confirmed: bool
 ```
 
-惰性初始化保证环境变量在 `main.py` 的 `load_dotenv()` 之后才被读取。
+### 8.2 节点实现：`agent/nodes.py`
+
+5 个节点函数，签名：`async (state) → dict`：
+
+```
+parse_content_node        → ContentParser.run()        → parsed_*
+extract_entities_node     → EntityExtractor.run()      → entities, key_concepts
+analyze_structure_node    → StructureAnalyzer.run()     → main_topics, suggested_outline
+confirm_template_node     → 标记 human_confirmed        → 等待用户确认 (interrupt)
+generate_note_node        → LLM 生成笔记                → generated_note
+```
+
+**`generate_note_node` 的核心 —— `_build_enriched_user_message`**：
+
+将 Tool 中间产出注入 LLM 请求，而不是只发原始内容：
+
+```
+user_message = 原始学习内容
+             + 内容结构（章节摘要，前 10 个）
+             + 已识别的核心概念
+             + 建议的笔记大纲（前 8 个）
+             + 元信息（类型/复杂度/学习时间/语言）
+```
+
+**依赖注入**：节点函数通过模块级变量 `_tool_registry` / `_llm_service` 获取依赖，由 `AgentExecutor.__init__` 调用 `inject_dependencies()` 设置。
+
+### 8.3 状态图：`agent/graph.py`
+
+```
+START → parse → extract → analyze → confirm → generate → END
+```
+
+- 使用 `MemorySaver` 作为 checkpointer（开发环境）
+- Phase 4 预留了 `interrupt_before=["confirm"]`（human-in-the-loop，当前注释掉等待前端适配）
+
+### 8.4 执行器：`agent/executor.py` — `AgentExecutor`
+
+两种执行模式：
+
+**`run_stream()` — SSE 流式**：
+
+```
+graph.astream(initial_state, config)
+  → yield "agent_start"
+  → for each node:
+      yield "stage_change"   (parse → extract → ...)
+      yield "node_finish"
+      检查 error → yield "agent_error" + return
+  → yield "agent_finish" (含 generated_note)
+```
+
+**`run_sync()` — 同步**：
+
+```
+await graph.astream(...)
+await graph.aget_state(config)
+return generated_note   (或 raise RuntimeError)
+```
 
 ---
 
-## 9. 并发模型
+## 9. Service Layer —— 服务层
 
-### 锁策略
+### 9.1 SSE 事件总线：`services/event_bus.py`
 
-每个 store 实例内部使用一个**全局 `asyncio.Lock`** 保护所有操作：
+**发布-订阅模式**，实现前端实时接收 Agent 执行进度：
 
 ```
-         ┌─────────────┐
-         │  asyncio.Lock│
-         └──────┬──────┘
-    ┌───────────┼───────────┐
-    ▼           ▼           ▼
-  get()       set()      delete()
+EventBus
+├── publish(AgentEvent)       → 推送到 session 的所有 Queue
+├── subscribe(session_id)     → SSESubscription
+└── unsubscribe(session_id, q)
 ```
 
-这是**粗粒度锁**。选择粗粒度的理由：
+**SSESubscription**：
+- `events()` → `AsyncGenerator[str]`，直接用于 FastAPI `StreamingResponse`
+- 每 30s 发送心跳 `: heartbeat\n\n`
+- 被取消或超时时自动 `close()`
 
-1. Phase 1 的并发度低（Agent 串行节点为主），锁竞争不是瓶颈
-2. 内存字典的读写是 ns 级别的，即使排队也感知不到延迟
-3. 细粒度锁（per-key 锁）需要维护锁字典，增加复杂度，而收益在 Phase 1 不明显
+**事件类型**：
 
-### 验证
+| 事件 | 含义 |
+|------|------|
+| `agent_start` | Agent 启动 |
+| `agent_finish` | 生成完成，`data.result` 包含笔记 |
+| `agent_error` | 出错 |
+| `node_start` / `node_finish` | 节点状态变更 |
+| `tool_start` / `tool_finish` | Tool 执行 |
+| `stage_change` | 阶段变更 |
+| `human_confirm_required` | 需要人类确认 |
+| `stream_chunk` | 流式输出分块 |
 
-10 个协程并发写入，每个写 20 个 key：
+**辅助构造函数**：`make_event()`, `stage_change()`, `tool_start()`, `tool_finish()`, `human_confirm_required()`
+
+### 9.2 文档导出：`services/export_service.py`
+
+将 Markdown 导出为 DOCX/PDF：
+
+```
+export(md, format)
+  → _parse_md_blocks(md)    # Markdown → 结构化块列表
+  → _build_docx(blocks)     # 块 → python-docx (A4, 微软雅黑)
+  → _build_pdf(blocks)      # 块 → reportlab (Helvetica, 中文降级)
+```
+
+**`_parse_md_blocks()`** 支持 9 种块类型：
+
+| 类型 | Markdown | 渲染形式 |
+|------|----------|---------|
+| `h1/h2/h3` | `# / ## / ###` | 分级标题 |
+| `p` | 普通文本 | 段落（支持 `**bold**`） |
+| `code` | ` ``` ` | 等宽字体代码块 |
+| `quote` | `> ` | 缩进引用（斜体 + 棕色） |
+| `ul` / `ol` | `- ` / `1. ` | 无序/有序列表 |
+| `table` | `\|...\|` | 表格（表头加粗） |
+| `hr` | `---` | 分隔线 |
+
+---
+
+## 10. API Layer —— API 层
+
+### 10.1 Agent 端点：`api/agent.py`
 
 ```python
-async def writer(sid, n):
-    for i in range(20):
-        await c.session_store.set(sid, f'k{i}', f'val-{n}-{i}')
+POST /api/agent/note        → 同步生成（兼容旧版）
+POST /api/agent/note/stream → SSE 流式生成
+```
 
-await asyncio.gather(*[writer(f's{w}', w) for w in range(10)])
-# 结果：200 次写入全部成功，无数据竞争
+**请求模型**：
+
+```python
+class NoteRequest(BaseModel):
+    content: str    # 1-50000 字符
+    template: str   # outline | summary | cornell | qa
+```
+
+**流程**：
+
+```
+1. 校验 template 是否合法
+2. get_container() → agent_executor
+3. 生成 session_id
+4. executor.run_sync(content, template, session_id)
+5. 返回 NoteResponse(result=markdown_note)
+```
+
+### 10.2 导出端点：`api/export.py`
+
+```python
+POST /api/export → 下载 DOCX/PDF 文件
+```
+
+**请求模型**：
+
+```python
+class ExportRequest(BaseModel):
+    content: str    # Markdown 内容
+    format: str     # docx | pdf
+```
+
+**流程**：
+
+```
+1. 校验 format
+2. get_container() → export_service
+3. export_service.export(content, format) → BytesIO
+4. 返回 StreamingResponse (带 Content-Disposition)
 ```
 
 ---
 
-## 10. 测试验证
+## 11. 完整请求链路
 
-Phase 1 优化通过 5 项集成测试：
+以 `POST /api/agent/note` 为例：
 
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| Container 创建 | 所有服务实例化无异常 | ✅ |
-| 并发写入 | 10 协程 x 20 次写入，数据完整性 | ✅ |
-| 主动清理 | 注入过期 key，`run_once()` 清除 | ✅ |
-| UoW 提交 | 正常退出后笔记持久化 | ✅ |
-| UoW 回滚 | 异常退出后笔记被补偿删除 | ✅ |
-| FastAPI 加载 | 应用启动，路由注册 | ✅ |
+```
+ 1. FastAPI 接收请求
+    └── NoteRequest 校验 (content 1-50000, template ∈ VALID_TEMPLATES)
+
+ 2. get_container() → Container 单例
+
+ 3. container.agent_executor.run_sync(content, template, session_id)
+
+ 4. LangGraph 执行状态图:
+
+    ┌─ PARSE ──────────────────────────────────────────┐
+    │ ContentParser.run(content)                        │
+    │   → 正则扫描 # / ## / ### 标题                     │
+    │   → 统计中文字符 + 英文单词                        │
+    │   → 检测语言 (zh/en/mixed)                        │
+    │ → state: parsed_title, parsed_sections, words     │
+    └───────────────────────────────────────────────────┘
+
+    ┌─ EXTRACT ────────────────────────────────────────┐
+    │ EntityExtractor.run(content, sections)            │
+    │   → LLMService.generate(prompt)                  │
+    │     → 查缓存 (MD5 hash)                           │
+    │     → 未命中 → DeepSeekProvider.generate()        │
+    │     → 写缓存 (TTL=300s)                           │
+    │   → 解析 JSON → EntityItem 列表                   │
+    │ → state: entities, key_concepts                   │
+    └───────────────────────────────────────────────────┘
+
+    ┌─ ANALYZE ────────────────────────────────────────┐
+    │ StructureAnalyzer.run(content, sections, words)   │
+    │   → 本地计算: depth, complexity                   │
+    │   → LLMService.generate(prompt)                  │
+    │   → 解析 JSON → MainTopic + SuggestedOutline     │
+    │ → state: main_topics, suggested_outline, ...      │
+    └───────────────────────────────────────────────────┘
+
+    ┌─ CONFIRM ────────────────────────────────────────┐
+    │ 标记 human_confirmed = True                       │
+    │ (Phase 4: interrupt_before 暂停等待用户确认)       │
+    └───────────────────────────────────────────────────┘
+
+    ┌─ GENERATE ───────────────────────────────────────┐
+    │ 从 NOTE_PROMPTS 取模板 prompt                     │
+    │ _build_enriched_user_message(state):             │
+    │   原始内容 + 章节结构 + 核心概念                    │
+    │   + 建议大纲 + 元信息                              │
+    │ LLMService.generate(system_prompt, user_message)  │
+    │ → state: generated_note (Markdown)                │
+    └───────────────────────────────────────────────────┘
+
+ 5. graph.aget_state(config) → 提取 generated_note
+
+ 6. 返回 NoteResponse(result=markdown_note)
+```
 
 ---
 
-## 11. 待演进项
+## 12. 设计亮点总结
 
-以下在 Phase 1 中**故意不做**，留到后期迭代：
+1. **严格的分层架构**：API → Agent → Tool/Service/Prompt → LLM → Data，每层只依赖下一层的抽象接口
 
-### 中优（业务稳定后）
+2. **手动 DI 容器**：`Container` 数据类 + `create_dev()` 工厂 + `get_container()` 单例，简单、可测试、无框架依赖
 
-| 项 | 说明 |
-|----|------|
-| BaseRuntimeStore 顶层抽象 | 提取所有 Runtime Store 的公共接口签名，与 BaseMemoryStore 形成双基类 |
-| BaseBusinessRepository 接口抽象 | 提取 `_save_impl` 等方法的 `@abstractmethod` 声明 |
-| ModelMapper 转换层 | Pydantic ↔ SQLAlchemy 双向转换，降低接入 PG 的开发成本 |
-| 多数据源自由组合 | Container 支持 `create(use_cache=redis, use_db=postgres)` 的混合模式 |
-| 故障降级 | Redis 不可用时自动 fallback 到内存实现 |
-| 通用分页/批量操作/软删除 | `BaseBusinessRepository` 内置 `bulk_save`、`soft_delete` |
+3. **模板方法模式**：`BaseMemoryStore`, `BaseBusinessRepository`, `BaseTool` 都使用"基类定义流程，子类实现钩子"的模式，减少重复代码
 
-### 低优（长期架构）
+4. **抽象接口先行**：`data/interfaces.py` 和 `tools/interfaces.py` 定义了全部 ABC，内存实现只是其中一种选择，替换为 Redis/PostgreSQL 只需实现接口，上层代码零改动
 
-| 项 | 说明 |
-|----|------|
-| 冷热数据分离归档 | 超过 N 天的笔记压缩归档到对象存储 |
-| 全链路监控埋点 | Prometheus metrics：操作次数、耗时分布、清理速率 |
-| 游标分页 | 替代 offset 分页，支持大数据量场景 |
-| LRU 缓存淘汰 | 当缓存条目超过上限时自动淘汰最久未访问的条目 |
-| Read-Only 副本路由 | 读写分离：写走主库，查询走只读副本 |
+5. **LangGraph 状态图**：5 节点线性流水线，每个节点产出的字段通过 `NoteAgentState` 传递，最终 `generate` 节点整合所有中间结果。节点间完全解耦，可独立替换
+
+6. **SSE 实时推送**：EventBus 发布-订阅模式，前端实时看到 Agent 执行进度（parse → extract → analyze → confirm → generate）
+
+7. **补偿事务**：UnitOfWork 用补偿函数模式实现跨存储回滚，单个补偿失败不阻断后续补偿
+
+8. **缓存去重**：LLM 响应按 content hash 缓存（TTL=300s），避免重复调用浪费 token
+
+9. **双轨 TTL 清理**：惰性清理（get 时检查）+ 主动清理（CleanupScheduler 定时扫描），防止过期数据永久泄留
+
+10. **统一异常体系**：5 级异常树，每条异常携带 `store_name` + `operation` + `detail`，便于生产环境排障
 
 ---
 
-## 附录 A：文件清单
+## 13. 文件清单
 
 ```
-backend/app/data/
-├── exceptions.py                      # NEW  异常体系（5 个异常类）
-├── interfaces.py                      # KEPT 抽象接口（未变）
-├── cleanup.py                         # NEW  后台清理调度器
-├── unit_of_work.py                    # NEW  补偿事务 UnitOfWork
-├── runtime/
-│   ├── base.py                        # NEW  BaseMemoryStore 基类
-│   ├── checkpoint_store.py            # REFACTORED  继承 BaseMemoryStore
-│   ├── session_store.py               # REFACTORED  继承 BaseMemoryStore + _cleanup_expired
-│   └── cache_store.py                 # REFACTORED  继承 BaseMemoryStore + _cleanup_expired
-└── business/
-    ├── base.py                        # NEW  BaseBusinessRepository 基类
-    ├── models.py                      # KEPT 未变
-    └── repository/
-        ├── note_repo.py               # REFACTORED  继承 BaseBusinessRepository[StudyNote]
-        └── user_repo.py               # REFACTORED  继承 BaseBusinessRepository[UserPreference]
+backend/
+├── requirements.txt
+├── .env                              # 环境变量（不入库）
+└── app/
+    ├── __init__.py
+    ├── main.py                       # FastAPI 入口 + lifespan
+    ├── container.py                  # DI 容器
+    │
+    ├── api/
+    │   ├── __init__.py
+    │   ├── agent.py                  # POST /api/agent/note{,/stream}
+    │   └── export.py                 # POST /api/export
+    │
+    ├── agent/
+    │   ├── __init__.py
+    │   ├── state.py                  # NoteAgentState (TypedDict)
+    │   ├── nodes.py                  # 5 个节点函数
+    │   ├── graph.py                  # LangGraph 状态图
+    │   └── executor.py               # AgentExecutor (run_stream + run_sync)
+    │
+    ├── services/
+    │   ├── __init__.py
+    │   ├── llm_service.py            # 统一 LLM 服务 (多 Provider + 缓存)
+    │   ├── export_service.py         # Markdown → DOCX/PDF
+    │   └── event_bus.py              # SSE 事件总线
+    │
+    ├── tools/
+    │   ├── __init__.py
+    │   ├── base.py                   # BaseTool[I,O] 抽象基类
+    │   ├── interfaces.py             # IToolRegistry 抽象接口
+    │   ├── registry.py               # ToolRegistry 实现
+    │   ├── content_parser.py         # 纯本地内容解析
+    │   ├── entity_extractor.py       # LLM 驱动实体提取
+    │   └── structure_analyzer.py     # 混合模式结构分析
+    │
+    ├── prompts/
+    │   ├── __init__.py
+    │   ├── schemas.py                # PromptTemplate 数据模型
+    │   ├── registry.py               # PromptRegistry 注册中心
+    │   ├── builder.py                # PromptBuilder 变量填充
+    │   ├── note.py                   # 笔记模板兼容层
+    │   └── templates/
+    │       └── note/
+    │           ├── outline.md
+    │           ├── summary.md
+    │           ├── cornell.md
+    │           └── qa.md
+    │
+    ├── llm/
+    │   ├── __init__.py
+    │   └── deepseek.py               # 旧版 DeepSeek 客户端（兼容）
+    │
+    └── data/
+        ├── __init__.py
+        ├── interfaces.py             # 所有存储抽象接口 + 数据模型
+        ├── exceptions.py             # 5 级异常体系
+        ├── cleanup.py                # 后台清理调度器
+        ├── unit_of_work.py           # 补偿事务 UnitOfWork
+        ├── runtime/
+        │   ├── __init__.py
+        │   ├── base.py               # BaseMemoryStore 基类
+        │   ├── checkpoint_store.py   # MemoryCheckpointStore
+        │   ├── session_store.py      # MemorySessionStore (TTL)
+        │   └── cache_store.py        # MemoryCacheStore (TTL)
+        └── business/
+            ├── __init__.py
+            ├── base.py               # BaseBusinessRepository[ModelT] 基类
+            ├── models.py             # 数据模型兼容导出
+            └── repository/
+                ├── __init__.py
+                ├── note_repo.py      # MemoryNoteRepository
+                └── user_repo.py      # MemoryUserPreferenceRepository
 ```
-
-## 附录 B：关键设计决策记录
-
-| 决策 | 选择 | 替代方案 | 理由 |
-|------|------|---------|------|
-| 锁类型 | `asyncio.Lock` | `threading.Lock` | 全异步环境，threading.Lock 会阻塞 event loop |
-| 锁粒度 | 每实例一把全局锁 | per-key 锁 | Phase 1 并发度低，粗粒度锁实现简单 |
-| 事务模式 | 补偿事务 | 两阶段提交 | 内存存储不支持真正的 ACID，补偿事务符合场景 |
-| TTL 清理 | 惰性 + 定时双轨 | 纯惰性 | 纯惰性清理无法回收永不访问的过期数据 |
-| 依赖注入 | 手动工厂方法 | DI 框架（dependency-injector） | 当前服务数量少，框架引入的认知成本 > 收益 |
-| 异常设计 | 继承树 | 单一 StorageError | 分类异常允许上层按需捕获不同粒度 |
-| 慢操作阈值 | 100ms | 50ms / 200ms | 内存操作正常应在 1ms 内，100ms 是保守阈值 |

@@ -153,7 +153,8 @@ class SSESubscription:
 # ============================================================
 
 def make_event(event_type: EventType, session_id: str, **data: Any) -> AgentEvent:
-    """快捷构造 AgentEvent。"""
+    """快捷构造 AgentEvent（session_id 自动注入 data 供前端使用）。"""
+    data["session_id"] = session_id
     return AgentEvent(type=event_type, data=data, session_id=session_id)
 
 

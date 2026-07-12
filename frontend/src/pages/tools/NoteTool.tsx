@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Copy, Download, ChevronDown, RotateCcw } from 'lucide-react'
 import { useOutputStore } from '../../stores/outputStore'
 import { NOTE_TEMPLATES } from '../../types'
@@ -14,34 +14,47 @@ import MarkdownRenderer from '../../components/common/MarkdownRenderer'
 
 export default function NoteTool() {
   const [content, setContent] = useState('')
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
+  const [usedTemplate, setUsedTemplate] = useState<string | null>(null)
   const [downloadOpen, setDownloadOpen] = useState(false)
 
   const addOutput = useOutputStore((s) => s.addOutput)
-  const { isConnected, currentStage, stageIndex, result, isDone, error, connect } = useSSE()
+  const {
+    isConnected, currentStage, stageIndex, result, isDone, error,
+    confirmRequired, confirmQuestion, confirmOptions,
+    connect, confirmAndResume: sseConfirmAndResume, rejectConfirm, reset,
+  } = useSSE()
 
-  const canGenerate = content.trim().length > 0 && selectedTemplate !== null
+  const canGenerate = content.trim().length > 0
 
   const handleGenerate = useCallback(() => {
     if (!canGenerate) return
+    // 使用默认模板启动；用户在 Human-in-the-Loop 确认环节再选定最终模板
     connect('/api/agent/note/stream', {
       content,
-      template: selectedTemplate,
+      template: 'outline',
     })
-  }, [canGenerate, content, selectedTemplate, connect])
+  }, [canGenerate, content, connect])
 
-  // Save to output history when done
-  const savedRef = { current: false }
+  // 包装 confirmAndResume，记录用户最终选定的模板
+  const handleConfirm = useCallback((templateId: string) => {
+    setUsedTemplate(templateId)
+    sseConfirmAndResume(templateId)
+  }, [sseConfirmAndResume])
+
+  // Save to output history when done (only once per result)
+  const savedRef = useRef(false)
   if (isDone && result && !savedRef.current) {
     savedRef.current = true
-    const tpl = NOTE_TEMPLATES.find((t) => t.id === selectedTemplate)
+    const tplId = usedTemplate ?? 'outline'
+    const tpl = NOTE_TEMPLATES.find((t) => t.id === tplId)
     if (tpl) addOutput(tpl.id, result)
   }
   if (!isDone) savedRef.current = false
 
   const handleReset = () => {
+    reset()
     setContent('')
-    setSelectedTemplate(null)
+    setUsedTemplate(null)
   }
 
   const handleCopy = async () => {
@@ -81,6 +94,56 @@ export default function NoteTool() {
     setDownloadOpen(false)
   }
 
+  // Confirmation dialog — shown when agent pauses for human input
+  if (confirmRequired) {
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-12 animate-fade-in">
+        <AgentProgress
+          currentStage="等待确认模板..."
+          stageIndex={3}
+          isConnected={false}
+        />
+
+        <div className="mt-8 rounded-2xl border border-primary-100 bg-primary-50/30 p-8 text-center">
+          <div className="mb-2 text-3xl">🤔</div>
+          <h3 className="mb-1 font-display text-lg font-semibold text-ink">
+            确认模板选择
+          </h3>
+          <p className="mb-6 text-sm text-ink-muted">
+            {confirmQuestion || '请选择笔记模板以继续生成'}
+          </p>
+
+          <div className="mb-6 flex flex-wrap justify-center gap-3">
+            {(confirmOptions.length > 0 ? confirmOptions : ['outline', 'summary', 'cornell', 'qa'])
+              .map((opt) => {
+                const tpl = NOTE_TEMPLATES.find((t) => t.id === opt)
+                const emoji: Record<string, string> = {
+                  outline: '🌳', summary: '📄', cornell: '📋', qa: '💬',
+                }
+                return (
+                  <button
+                    key={opt}
+                    onClick={() => handleConfirm(opt)}
+                    className="rounded-xl border border-primary-200 bg-white px-5 py-3 text-sm font-medium text-primary-700
+                               hover:bg-primary-50 hover:border-primary-300 transition-colors shadow-sm"
+                  >
+                    {emoji[opt] ?? '📝'} {tpl?.name ?? opt}
+                  </button>
+                )
+              })}
+          </div>
+
+          <button
+            onClick={rejectConfirm}
+            className="text-xs text-ink-muted hover:text-ink-soft underline"
+          >
+            取消生成
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // If processing, show agent progress
   if (isConnected || currentStage) {
     return (
@@ -110,7 +173,7 @@ export default function NoteTool() {
           <div>
             <h2 className="font-display text-xl font-bold text-ink tracking-tight">生成的笔记</h2>
             <p className="mt-1 text-xs text-ink-muted">
-              {NOTE_TEMPLATES.find((t) => t.id === selectedTemplate)?.name ?? ''}
+              {NOTE_TEMPLATES.find((t) => t.id === usedTemplate)?.name ?? ''}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -166,55 +229,20 @@ export default function NoteTool() {
     )
   }
 
-  // Input view — content + template selection
+  // Input view — upload content, template will be chosen during Agent confirmation
   return (
     <div className="mx-auto max-w-3xl px-6 py-12 animate-fade-in">
       {/* Header */}
       <div className="mb-8 text-center">
         <h2 className="font-display text-2xl font-bold text-ink tracking-tight">笔记生成</h2>
         <p className="mt-1.5 text-sm text-ink-muted">
-          AI Agent 将自动解析内容、提取知识点，生成结构化笔记
+          AI Agent 将自动解析内容、提取知识点，中途会让你选择模板
         </p>
       </div>
 
       {/* Upload zone */}
       <div className="mb-8">
         <UploadZone value={content} onChange={setContent} />
-      </div>
-
-      {/* Template selection */}
-      <div className="mb-8">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-muted/60">
-          选择笔记模板
-        </h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {NOTE_TEMPLATES.map((tpl) => {
-            const isSelected = selectedTemplate === tpl.id
-            const emoji: Record<string, string> = {
-              outline: '🌳', summary: '📄', cornell: '📋', qa: '💬',
-            }
-            return (
-              <button
-                key={tpl.id}
-                onClick={() => setSelectedTemplate(tpl.id)}
-                className={`rounded-3xl border p-5 text-left transition-all duration-200 ${
-                  isSelected
-                    ? 'border-primary-200 bg-primary-50/50 shadow-sm'
-                    : 'border-border bg-surface hover:border-primary-150 hover:bg-paper/50'
-                }`}
-              >
-                <div className="mb-2 text-2xl">{emoji[tpl.id] ?? '📝'}</div>
-                <h4 className="mb-1 text-sm font-semibold text-ink">{tpl.name}</h4>
-                <p className="text-xs text-ink-muted leading-relaxed">{tpl.description}</p>
-                {isSelected && (
-                  <div className="mt-3 inline-flex items-center gap-1 rounded-lg bg-primary-100 px-2.5 py-0.5 text-2xs font-medium text-primary-700">
-                    已选择
-                  </div>
-                )}
-              </button>
-            )
-          })}
-        </div>
       </div>
 
       {/* Generate button */}
@@ -231,7 +259,7 @@ export default function NoteTool() {
           开始生成笔记
         </button>
         <p className="mt-3 text-2xs text-ink-muted/40">
-          {!content.trim() ? '请先上传学习内容' : !selectedTemplate ? '请选择笔记模板' : 'AI Agent 将自动分析并生成笔记'}
+          {!content.trim() ? '请先上传学习内容' : 'AI Agent 将自动分析并在确认模板后生成笔记'}
         </p>
       </div>
     </div>

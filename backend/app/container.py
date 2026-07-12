@@ -29,6 +29,8 @@ from app.tools.structure_analyzer import StructureAnalyzer
 
 from app.prompts.registry import PromptRegistry
 
+from app.skills import SkillRegistry, NoteGenerationSkill
+
 from app.services.llm_service import LLMService
 from app.services.export_service import ExportService
 from app.services.event_bus import EventBus
@@ -67,6 +69,10 @@ class Container:
     # Agent Layer
     agent_executor: AgentExecutor
 
+    # Skill Layer
+    skill_registry: SkillRegistry
+    note_gen_skill: NoteGenerationSkill
+
     @classmethod
     def create_dev(cls) -> "Container":
         """创建开发环境容器。"""
@@ -91,11 +97,25 @@ class Container:
         # --- Tool Layer ---
         tool_registry = cls._build_tool_registry(llm_service)
 
+        # --- Skill Layer ---
+        skill_registry = SkillRegistry()
+        note_gen_skill = NoteGenerationSkill()
+        tools_dict = {t.name: t for t in tool_registry.list_all()}
+        note_gen_skill.inject_dependencies(
+            tools=tools_dict,
+            prompt_registry=prompt_registry,
+            llm_service=llm_service,
+        )
+        skill_registry.register(note_gen_skill)
+
         # --- Agent Layer ---
         agent_executor = AgentExecutor(
             tool_registry=tool_registry,
             llm_service=llm_service,
             event_bus=event_bus,
+            skill=note_gen_skill,
+            note_repo=note_repo,
+            user_pref_repo=user_pref_repo,
         )
 
         # --- Cleanup scheduler ---
@@ -118,6 +138,8 @@ class Container:
             export_service=export_service,
             event_bus=event_bus,
             agent_executor=agent_executor,
+            skill_registry=skill_registry,
+            note_gen_skill=note_gen_skill,
         )
         container.uow_factory = UnitOfWorkFactory(container)
         return container
@@ -144,16 +166,107 @@ class Container:
         )
         return PromptRegistry(templates_dir)
 
+    @classmethod
+    def create_prod(cls) -> "Container":
+        """
+        创建生产环境容器 —— PostgreSQL + Redis。
+
+        要求先调用 init_database() 和 init_redis() 初始化基础设施。
+        """
+        from app.data.database import get_session_factory
+        from app.data.redis_client import get_redis_client
+        from app.data.business.repository.pg_note_repo import PgNoteRepository
+        from app.data.business.repository.pg_user_repo import PgUserPreferenceRepository
+        from app.data.runtime.redis_cache import RedisCacheStore
+
+        session_factory = get_session_factory()
+        redis_client = get_redis_client()
+
+        # --- Runtime stores ---
+        checkpoint_store = MemoryCheckpointStore()   # LangGraph 使用自带 MemorySaver
+        session_store = MemorySessionStore()          # 会话级，不持久化
+        cache_store = RedisCacheStore(redis_client)   # Redis 缓存
+
+        # --- Business repos ---
+        note_repo = PgNoteRepository(session_factory)
+        user_pref_repo = PgUserPreferenceRepository(session_factory)
+
+        # --- Services ---
+        llm_service = LLMService(cache=cache_store)
+        export_service = ExportService()
+        event_bus = EventBus()
+
+        # --- Prompt Layer ---
+        prompt_registry = cls._build_prompt_registry()
+
+        # --- Tool Layer ---
+        tool_registry = cls._build_tool_registry(llm_service)
+
+        # --- Skill Layer ---
+        skill_registry = SkillRegistry()
+        note_gen_skill = NoteGenerationSkill()
+        tools_dict = {t.name: t for t in tool_registry.list_all()}
+        note_gen_skill.inject_dependencies(
+            tools=tools_dict,
+            prompt_registry=prompt_registry,
+            llm_service=llm_service,
+        )
+        skill_registry.register(note_gen_skill)
+
+        # --- Agent Layer ---
+        agent_executor = AgentExecutor(
+            tool_registry=tool_registry,
+            llm_service=llm_service,
+            event_bus=event_bus,
+            skill=note_gen_skill,
+            note_repo=note_repo,
+            user_pref_repo=user_pref_repo,
+        )
+
+        # --- Cleanup scheduler (仅注册内存存储) ---
+        cleanup = CleanupScheduler(interval_seconds=300)
+        for store in [session_store, checkpoint_store]:
+            if isinstance(store, BaseMemoryStore):
+                cleanup.register(store)
+
+        container = cls(
+            checkpoint_store=checkpoint_store,
+            session_store=session_store,
+            cache_store=cache_store,
+            note_repo=note_repo,
+            user_pref_repo=user_pref_repo,
+            cleanup_scheduler=cleanup,
+            uow_factory=UnitOfWorkFactory(None),
+            tool_registry=tool_registry,
+            prompt_registry=prompt_registry,
+            llm_service=llm_service,
+            export_service=export_service,
+            event_bus=event_bus,
+            agent_executor=agent_executor,
+            skill_registry=skill_registry,
+            note_gen_skill=note_gen_skill,
+        )
+        container.uow_factory = UnitOfWorkFactory(container)
+        return container
+
+    @classmethod
+    def create(cls) -> "Container":
+        """根据 APP_ENV 自动选择开发/生产容器。"""
+        app_env = os.getenv("APP_ENV", "development")
+        if app_env == "production":
+            return cls.create_prod()
+        return cls.create_dev()
+
 
 # 模块级单例
 _container: Container | None = None
 
 
 def get_container() -> Container:
-    """获取全局服务容器。"""
+    """获取全局服务容器（根据 APP_ENV 自动选择模式）。"""
     global _container
     if _container is None:
-        _container = Container.create_dev()
+        _container = Container.create()
     return _container
 
 

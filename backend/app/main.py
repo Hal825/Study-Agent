@@ -24,8 +24,29 @@ if env_path.exists():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期 —— 启动时初始化服务容器。"""
-    # 启动
+    """应用生命周期 —— 启动时初始化基础设施 + 服务容器。"""
+    # ---- 0. 初始化外部基础设施（仅在 production 模式） ----
+    app_env = os.getenv("APP_ENV", "development")
+
+    if app_env == "production":
+        database_url = os.getenv("DATABASE_URL")
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+        if not database_url:
+            raise RuntimeError("APP_ENV=production 时必须设置 DATABASE_URL")
+
+        from app.data.database import init_database, create_tables
+        from app.data.redis_client import init_redis
+
+        await init_database(database_url, echo=os.getenv("DB_ECHO", "").lower() == "true")
+        await create_tables()
+        await init_redis(redis_url)
+
+        host_info = database_url.split("@")[1] if "@" in database_url else database_url
+        print(f"   PostgreSQL 已连接: {host_info}")
+        print(f"   Redis 已连接: {redis_url}")
+
+    # ---- 1. 启动服务容器 ----
     container = get_container()
     models = container.llm_service.available_models
     print(f"Study Agent API 启动成功")
@@ -39,8 +60,16 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # 关闭
+    # ---- 关闭 ----
     await container.cleanup_scheduler.stop()
+
+    if app_env == "production":
+        from app.data.database import close_database
+        from app.data.redis_client import close_redis
+        await close_database()
+        await close_redis()
+        print("   PostgreSQL / Redis 连接已关闭")
+
     print("Study Agent API 已关闭")
 
 
