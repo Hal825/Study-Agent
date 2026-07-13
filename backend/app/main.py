@@ -95,8 +95,10 @@ app.add_middleware(
 # 挂载路由
 from app.api.agent import router as agent_router  # noqa: E402
 from app.api.export import router as export_router  # noqa: E402
+from app.api.upload import router as upload_router  # noqa: E402
 app.include_router(agent_router)
 app.include_router(export_router)
+app.include_router(upload_router)
 
 
 @app.get("/api/health")

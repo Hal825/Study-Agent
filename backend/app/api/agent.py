@@ -1,12 +1,13 @@
 """
 Agent API 端点 —— 智能体笔记生成。
 
-- POST /api/agent/note       → 同步（兼容旧版）
-- POST /api/agent/note/stream → SSE 流式（LangGraph 驱动）
+- POST /api/agent/note              → 同步（兼容旧版）
+- POST /api/agent/note/stream        → SSE 流式（文本输入）
+- POST /api/agent/note/vision/stream → SSE 流式（图片输入，Qwen VL 识别）
 """
 
 import uuid
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -131,6 +132,88 @@ async def confirm_note(session_id: str, request: ConfirmRequest):
         executor.resume_stream(
             session_id=session_id,
             confirmed_template=confirmed_template,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---- 视觉识别端点（图片 → 笔记） ----
+IMAGE_MAX_SIZE = 20 * 1024 * 1024  # 20MB
+
+
+@router.post("/note/vision/stream")
+async def create_note_from_image_stream(
+    file: UploadFile = File(..., description="图片文件（jpg/png/webp/gif）"),
+    template: str = Form("outline"),
+):
+    """
+    上传图片文件，通过 Qwen VL 识别为 Markdown 文本，
+    再进入 Agent 流水线生成笔记（SSE 流式推送）。
+
+    流程：
+    1. 校验图片格式和大小
+    2. VisionPreprocessorTool 图片 → Markdown
+    3. AgentExecutor.run_stream() → SSE 流
+    """
+    if template not in VALID_TEMPLATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的模板 ID '{template}'，可选值为: {list(VALID_TEMPLATES)}",
+        )
+
+    # ---- 1. 校验图片 ----
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="未提供文件名")
+
+    mime = file.content_type or ""
+    if not mime.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型 '{mime}'，请上传图片文件",
+        )
+
+    file_bytes = await file.read()
+
+    if len(file_bytes) > IMAGE_MAX_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"图片文件过大 ({len(file_bytes) / 1024 / 1024:.1f}MB)，上限为 20MB",
+        )
+
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    # ---- 2. 视觉识别 ----
+    container = get_container()
+    from app.tools.vision_models import VisionInput
+
+    try:
+        vision_result = await container.vision_tool.run(VisionInput(
+            image_bytes=file_bytes,
+            file_name=file.filename,
+        ))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图片识别失败: {str(e)}")
+
+    if not vision_result.ok:
+        raise HTTPException(status_code=500, detail=f"图片识别失败: {vision_result.error}")
+
+    content = vision_result.data.cleaned_markdown
+
+    # ---- 3. Agent 流水线 ----
+    executor = container.agent_executor
+    session_id = f"vision_note_{uuid.uuid4().hex[:8]}"
+
+    return StreamingResponse(
+        executor.run_stream(
+            content=content,
+            template_id=template,
+            session_id=session_id,
         ),
         media_type="text/event-stream",
         headers={

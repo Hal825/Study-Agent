@@ -26,6 +26,7 @@ from app.tools.registry import ToolRegistry
 from app.tools.content_parser import ContentParser
 from app.tools.entity_extractor import EntityExtractor
 from app.tools.structure_analyzer import StructureAnalyzer
+from app.tools.vision_preprocessor import VisionPreprocessorTool
 
 from app.prompts.registry import PromptRegistry
 
@@ -73,6 +74,9 @@ class Container:
     skill_registry: SkillRegistry
     note_gen_skill: NoteGenerationSkill
 
+    # Vision Tool
+    vision_tool: VisionPreprocessorTool
+
     @classmethod
     def create_dev(cls) -> "Container":
         """创建开发环境容器。"""
@@ -96,6 +100,9 @@ class Container:
 
         # --- Tool Layer ---
         tool_registry = cls._build_tool_registry(llm_service)
+
+        # --- Vision Tool ---
+        vision_tool = VisionPreprocessorTool(cache_store=cache_store)
 
         # --- Skill Layer ---
         skill_registry = SkillRegistry()
@@ -140,6 +147,7 @@ class Container:
             agent_executor=agent_executor,
             skill_registry=skill_registry,
             note_gen_skill=note_gen_skill,
+            vision_tool=vision_tool,
         )
         container.uow_factory = UnitOfWorkFactory(container)
         return container
@@ -202,6 +210,9 @@ class Container:
         # --- Tool Layer ---
         tool_registry = cls._build_tool_registry(llm_service)
 
+        # --- Vision Tool ---
+        vision_tool = VisionPreprocessorTool(cache_store=cache_store)
+
         # --- Skill Layer ---
         skill_registry = SkillRegistry()
         note_gen_skill = NoteGenerationSkill()
@@ -245,6 +256,7 @@ class Container:
             agent_executor=agent_executor,
             skill_registry=skill_registry,
             note_gen_skill=note_gen_skill,
+            vision_tool=vision_tool,
         )
         container.uow_factory = UnitOfWorkFactory(container)
         return container
