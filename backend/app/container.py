@@ -37,6 +37,7 @@ from app.services.export_service import ExportService
 from app.services.event_bus import EventBus
 
 from app.agent.executor import AgentExecutor
+from app.agent.chat_executor import ChatAgentExecutor
 
 
 @dataclass
@@ -69,6 +70,7 @@ class Container:
 
     # Agent Layer
     agent_executor: AgentExecutor
+    chat_executor: ChatAgentExecutor
 
     # Skill Layer
     skill_registry: SkillRegistry
@@ -125,6 +127,15 @@ class Container:
             user_pref_repo=user_pref_repo,
         )
 
+        # --- Chat Agent ---
+        chat_executor = ChatAgentExecutor(
+            tool_registry=tool_registry,
+            llm_service=llm_service,
+            event_bus=event_bus,
+            prompt_registry=prompt_registry,
+            note_repo=note_repo,
+        )
+
         # --- Cleanup scheduler ---
         cleanup = CleanupScheduler(interval_seconds=300)
         for store in [session_store, cache_store]:
@@ -145,6 +156,7 @@ class Container:
             export_service=export_service,
             event_bus=event_bus,
             agent_executor=agent_executor,
+            chat_executor=chat_executor,
             skill_registry=skill_registry,
             note_gen_skill=note_gen_skill,
             vision_tool=vision_tool,
@@ -234,6 +246,15 @@ class Container:
             user_pref_repo=user_pref_repo,
         )
 
+        # --- Chat Agent ---
+        chat_executor = ChatAgentExecutor(
+            tool_registry=tool_registry,
+            llm_service=llm_service,
+            event_bus=event_bus,
+            prompt_registry=prompt_registry,
+            note_repo=note_repo,
+        )
+
         # --- Cleanup scheduler (仅注册内存存储) ---
         cleanup = CleanupScheduler(interval_seconds=300)
         for store in [session_store, checkpoint_store]:
@@ -254,6 +275,7 @@ class Container:
             export_service=export_service,
             event_bus=event_bus,
             agent_executor=agent_executor,
+            chat_executor=chat_executor,
             skill_registry=skill_registry,
             note_gen_skill=note_gen_skill,
             vision_tool=vision_tool,

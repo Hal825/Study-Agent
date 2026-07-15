@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom'
-import { PenLine, GitGraph, Brain, ArrowRight, Sparkles } from 'lucide-react'
+import { MessageCircle, GitGraph, Brain, ArrowRight, Sparkles } from 'lucide-react'
 import { TOOLS } from '../types'
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
-  'pen-line': PenLine,
+  'message-circle': MessageCircle,
   'git-graph': GitGraph,
   brain: Brain,
 }

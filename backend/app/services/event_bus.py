@@ -39,6 +39,15 @@ class EventType(str, Enum):
     # 结果流式输出
     STREAM_CHUNK = "stream_chunk"
 
+    # ---- Chat Agent 事件 ----
+    CHAT_MESSAGE = "chat_message"                  # 通用聊天消息（文本）
+    CHAT_PROGRESS = "chat_progress"                # 分析/生成进度
+    CHAT_DESIGN_FRAMEWORK = "chat_design_framework"  # 设计框架卡片
+    CHAT_OPTION_CARDS = "chat_option_cards"        # 用户选项卡片
+    CHAT_STREAM_CHUNK = "chat_stream_chunk"        # 流式 Markdown 块（实时预览）
+    CHAT_NOTE_RESULT = "chat_note_result"          # 生成的笔记（最终）
+    CHAT_DONE = "chat_done"                        # 对话完成
+
 
 @dataclass
 class AgentEvent:
@@ -188,3 +197,87 @@ def human_confirm_required(session_id: str, question: str, options: list[str]) -
         EventType.HUMAN_CONFIRM_REQUIRED, session_id,
         question=question, options=options,
     )
+
+
+# ============================================================
+# Chat Agent 事件构造辅助函数
+# ============================================================
+
+def chat_message_event(
+    session_id: str,
+    role: str,
+    message_type: str,
+    content: str,
+    **extra: Any,
+) -> AgentEvent:
+    """构造聊天消息事件。"""
+    return make_event(
+        EventType.CHAT_MESSAGE, session_id,
+        role=role, message_type=message_type, content=content, **extra,
+    )
+
+
+def chat_progress_event(
+    session_id: str,
+    stage_label: str,
+    stage_index: int,
+    total_stages: int = 5,
+) -> AgentEvent:
+    """构造聊天进度事件。"""
+    return make_event(
+        EventType.CHAT_PROGRESS, session_id,
+        stage_label=stage_label, stage_index=stage_index, total_stages=total_stages,
+    )
+
+
+def chat_design_framework_event(
+    session_id: str,
+    design_framework: dict,
+) -> AgentEvent:
+    """构造设计框架事件。"""
+    return make_event(
+        EventType.CHAT_DESIGN_FRAMEWORK, session_id,
+        design_framework=design_framework,
+    )
+
+
+def chat_option_cards_event(
+    session_id: str,
+    question: str,
+    options: list[dict],
+    multi_select: bool = False,
+) -> AgentEvent:
+    """构造选项卡片事件。"""
+    return make_event(
+        EventType.CHAT_OPTION_CARDS, session_id,
+        question=question, options=options, multi_select=multi_select,
+    )
+
+
+def chat_stream_chunk_event(
+    session_id: str,
+    chunk: str,
+    accumulated: str,
+) -> AgentEvent:
+    """构造流式 Markdown 块事件（用于实时预览）。"""
+    return make_event(
+        EventType.CHAT_STREAM_CHUNK, session_id,
+        chunk=chunk, accumulated=accumulated,
+    )
+
+
+def chat_note_result_event(
+    session_id: str,
+    note_markdown: str,
+    template_id: str = "",
+) -> AgentEvent:
+    """构造笔记结果事件。"""
+    return make_event(
+        EventType.CHAT_NOTE_RESULT, session_id,
+        note_markdown=note_markdown, template_id=template_id,
+    )
+
+
+def chat_done_event(session_id: str) -> AgentEvent:
+    """构造对话完成事件。"""
+    return make_event(EventType.CHAT_DONE, session_id)

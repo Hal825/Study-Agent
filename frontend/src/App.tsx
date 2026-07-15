@@ -1,14 +1,14 @@
 import { Routes, Route } from 'react-router-dom'
 import AppLayout from './components/layout/AppLayout'
 import Dashboard from './pages/Dashboard'
-import NoteTool from './pages/tools/NoteTool'
+import ChatPage from './pages/ChatPage'
 
 function App() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/tool/note" element={<NoteTool />} />
+        <Route path="/chat" element={<ChatPage />} />
       </Route>
     </Routes>
   )

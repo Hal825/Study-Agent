@@ -8,7 +8,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from openai import OpenAI
 
@@ -57,6 +57,11 @@ class BaseLLMProvider(ABC):
         """检查是否支持该模型。"""
         ...
 
+    async def generate_stream(self, request: "LLMRequest") -> AsyncIterator[str]:
+        """流式生成，逐个返回 token 字符串。默认实现为非流式（一次性返回全部）。"""
+        response = await self.generate(request)
+        yield response.content
+
 
 # ============================================================
 # DeepSeek Provider
@@ -103,6 +108,26 @@ class DeepSeekProvider(BaseLLMProvider):
             },
             duration_ms=duration,
         )
+
+    async def generate_stream(self, request: "LLMRequest") -> AsyncIterator[str]:
+        """流式生成，逐个返回 token 字符串。"""
+        model = request.model or self._default_model
+
+        response = self._client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": request.system_prompt},
+                {"role": "user", "content": request.user_message},
+            ],
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=True,
+        )
+
+        for chunk in response:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                yield delta.content
 
 
 # ============================================================
@@ -178,6 +203,18 @@ class LLMService:
             await self._cache.set(cache_key, response, ttl_seconds=300)
 
         return response
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """
+        流式执行 LLM 调用。
+
+        绕过缓存，直接调用 provider 的流式接口，
+        逐个返回 token 字符串。
+        """
+        model = request.model or self._default_model
+        provider = self._resolve_provider(model)
+        async for token in provider.generate_stream(request):
+            yield token
 
     async def generate_legacy(self, system_prompt: str, user_message: str) -> str:
         """

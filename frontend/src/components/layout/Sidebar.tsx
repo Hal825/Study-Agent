@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
-  PenLine,
+  MessageCircle,
   GitGraph,
   Brain,
   Settings,
@@ -10,7 +10,7 @@ import {
 import { TOOLS } from '../../types'
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
-  'pen-line': PenLine,
+  'message-circle': MessageCircle,
   'git-graph': GitGraph,
   brain: Brain,
 }

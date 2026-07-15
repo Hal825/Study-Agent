@@ -1,16 +1,4 @@
 // ============================================================
-// 工作流步骤
-// ============================================================
-export type WorkflowStep = 'input' | 'config' | 'process' | 'result'
-
-export const WORKFLOW_STEPS: { key: WorkflowStep; label: string; number: number }[] = [
-  { key: 'input', label: '内容输入', number: 1 },
-  { key: 'config', label: '选项配置', number: 2 },
-  { key: 'process', label: '智能处理', number: 3 },
-  { key: 'result', label: '结果展示', number: 4 },
-]
-
-// ============================================================
 // 笔记模板类型
 // ============================================================
 export interface NoteTemplate {
@@ -67,11 +55,11 @@ export interface ToolNavItem {
 
 export const TOOLS: ToolNavItem[] = [
   {
-    id: 'note',
-    name: '笔记生成',
-    description: '上传内容，选择模板，AI 自动生成结构化笔记',
-    icon: 'pen-line',
-    path: '/tool/note',
+    id: 'chat',
+    name: 'AI 学习对话',
+    description: '与 AI 对话，逐步确认需求，自动生成结构化笔记',
+    icon: 'message-circle',
+    path: '/chat',
     available: true,
   },
   {
@@ -95,33 +83,55 @@ export const TOOLS: ToolNavItem[] = [
 ]
 
 // ============================================================
-// 工作流状态
+// Chat 对话类型
 // ============================================================
-export interface WorkflowState {
-  step: WorkflowStep
-  content: string
-  selectedTemplate: string | null
-  result: string
+export type MessageRole = 'user' | 'assistant' | 'system'
+export type MessageType = 'text' | 'design_framework' | 'option_cards' | 'markdown_note'
+export type ChatPhase = 'idle' | 'analyzing' | 'design' | 'generating' | 'revising' | 'done'
+export type PreviewMode = 'chat' | 'split' | 'preview'
+
+export interface TopicItem {
+  name: string
+  coverage: string
+  subtopics: string[]
 }
 
-// ============================================================
-// 智能体状态
-// ============================================================
-export interface AgentProcessStage {
+export interface DesignFrameworkData {
+  contentSummary: string
+  topics: TopicItem[]
+  suggestedFormat: string
+  formatReasoning?: string
+  alternativeFormats: string[]
+  formattingSuggestions: string[]
+  userPrompts: string[]
+}
+
+export interface OptionCard {
   id: string
   label: string
+  description: string
+  emoji: string
 }
 
-export const AGENT_STAGES: AgentProcessStage[] = [
-  { id: 'parse', label: '读取并理解内容...' },
-  { id: 'extract', label: '提取关键知识点...' },
-  { id: 'analyze', label: '分析内容结构...' },
-  { id: 'confirm', label: '确认模板选择...' },
-  { id: 'generate', label: '生成笔记内容...' },
-]
+export interface OptionCardsData {
+  question: string
+  options: OptionCard[]
+  multiSelect: boolean
+}
 
-export interface AgentState {
-  isProcessing: boolean
-  currentStageIndex: number
-  error: string | null
+export interface ChatMessage {
+  id: string
+  role: MessageRole
+  type: MessageType
+  content: string
+  data?: DesignFrameworkData | OptionCardsData | null
+  timestamp: number
+}
+
+export interface SelectionsData {
+  template?: string
+  annotations?: boolean
+  color_emphasis?: boolean
+  format_modifications?: string
+  topics?: string[]
 }
