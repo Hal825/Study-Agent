@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { MessageCircle, GitGraph, Brain, ArrowRight, Sparkles } from 'lucide-react'
+import { MessageCircle, GitGraph, Brain, ArrowRight, Sparkles, PenLine } from 'lucide-react'
 import { TOOLS } from '../types'
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
@@ -49,7 +49,7 @@ export default function Dashboard() {
               }`}
             >
               {tool.badge && (
-                <span className="absolute right-5 top-5 rounded-lg bg-paper-dark px-2.5 py-0.5 text-2xs text-ink-muted">
+                <span className="absolute right-5 top-5 rounded-lg bg-paper-dark px-2.5 py-0.5 text-xs text-ink-muted">
                   {tool.badge}
                 </span>
               )}

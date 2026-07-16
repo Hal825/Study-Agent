@@ -25,11 +25,22 @@ export function useChatSSE() {
 
     switch (eventType) {
       case 'chat_message': {
+        const content = (payload.content as string) || ''
+        const role = payload.role as string
+
+        // Suppress redundant messages that duplicate the design framework card
+        if (role === 'assistant') {
+          // "我已经分析了你的学习内容..." — duplicates the design framework card
+          if (content.startsWith('我已经分析了你的学习内容')) break
+          // "你还可以告诉我：你想重点关注..." — duplicates user prompts in design card
+          if (content.startsWith('你还可以告诉我')) break
+        }
+
         const msg: ChatMessage = {
           id: `msg-${Date.now()}`,
           role: (payload.role as 'user' | 'assistant' | 'system') || 'assistant',
           type: (payload.message_type as ChatMessage['type']) || 'text',
-          content: (payload.content as string) || '',
+          content,
           data: null,
           timestamp: Date.now(),
         }
@@ -38,6 +49,8 @@ export function useChatSSE() {
       }
 
       case 'chat_design_framework': {
+        // Agent has finished analyzing, now at HITL #1 — waiting for user preferences
+        store.setPhase('design')
         const df = payload.design_framework as Record<string, unknown>
         const msg: ChatMessage = {
           id: `df-${Date.now()}`,
@@ -79,6 +92,10 @@ export function useChatSSE() {
       case 'chat_stream_chunk': {
         const chunk = (payload.chunk as string) || ''
         store.appendStreamChunk(chunk)
+        // First chunk → we're generating
+        if (store.phase !== 'generating' && store.phase !== 'revising') {
+          store.setPhase('generating')
+        }
         // Auto-switch to split view on first chunk if in chat mode
         if (store.previewMode === 'chat') {
           store.setPreviewMode('split')
@@ -87,6 +104,8 @@ export function useChatSSE() {
       }
 
       case 'chat_note_result': {
+        // Agent has finished generating, now at HITL #2 — waiting for user feedback
+        store.setPhase('result')
         const noteMd = (payload.note_markdown as string) || ''
         const templateId = (payload.template_id as string) || 'outline'
         const msg: ChatMessage = {
@@ -123,6 +142,12 @@ export function useChatSSE() {
   }, [store, addOutput])
 
   const connect = useCallback((url: string, body: unknown) => {
+    // Abort any existing stream before starting a new one
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+
     resetState()
 
     const controller = new AbortController()
@@ -165,7 +190,7 @@ export function useChatSSE() {
           }
         }
 
-        // Stream ended
+        // Stream completed naturally — ensure isStreaming is false
         if (!controller.signal.aborted) {
           store.setIsStreaming(false)
         }
@@ -174,18 +199,43 @@ export function useChatSSE() {
         if (err.name !== 'AbortError') {
           store.setError(err.message ?? '连接失败')
         }
+        // Always clean up streaming state on error
+        if (!controller.signal.aborted) {
+          store.setIsStreaming(false)
+        }
       })
   }, [resetState, processSSE, store])
 
-  const startSession = useCallback((content: string) => {
+  const startSession = useCallback((content: string, fileName?: string, fileSize?: number) => {
+    // Add user message to chat immediately
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      type: 'text',
+      content: content.length > 500 ? content.slice(0, 500) + '\n\n...（内容已截断）' : content,
+      timestamp: Date.now(),
+      fileName,
+      fileSize,
+    }
+    store.addMessage(userMsg)
     store.setPhase('analyzing')
     connect('/api/chat/stream', { content })
   }, [store, connect])
 
-  const sendMessage = useCallback((message: string, selections?: SelectionsData) => {
+  const sendMessage = useCallback((message: string, selections?: SelectionsData, fileInfo?: { name: string; size: number }) => {
     const sessionId = store.sessionId
     if (!sessionId) {
-      // Fallback: if sessionId not set yet, treat as new session with content
+      // Fallback: no session yet, start a new one
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        type: 'text',
+        content: message,
+        timestamp: Date.now(),
+        fileName: fileInfo?.name,
+        fileSize: fileInfo?.size,
+      }
+      store.addMessage(userMsg)
       store.setPhase('analyzing')
       connect('/api/chat/stream', { content: message })
       return
@@ -198,6 +248,8 @@ export function useChatSSE() {
       type: 'text',
       content: message,
       timestamp: Date.now(),
+      fileName: fileInfo?.name,
+      fileSize: fileInfo?.size,
     }
     store.addMessage(userMsg)
 

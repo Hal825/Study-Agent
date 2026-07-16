@@ -40,7 +40,7 @@ export default function OutputSidebar({ onClose }: { onClose: () => void }) {
             <FileText size={14} className="text-ink-muted" />
             <span className="text-sm font-medium text-ink-soft">输出历史</span>
             {outputs.length > 0 && (
-              <span className="rounded-md bg-paper-dark px-1.5 py-0.5 text-2xs text-ink-muted">
+              <span className="rounded-md bg-paper-dark px-1.5 py-0.5 text-xs text-ink-muted">
                 {outputs.length}
               </span>
             )}
@@ -71,7 +71,7 @@ export default function OutputSidebar({ onClose }: { onClose: () => void }) {
             <div className="flex flex-col items-center justify-center py-20 text-ink-muted/30">
               <Clock size={24} className="mb-3" />
               <p className="text-xs">暂无输出</p>
-              <p className="text-2xs mt-1">生成笔记后将在这里显示</p>
+              <p className="text-xs mt-1">生成笔记后将在这里显示</p>
             </div>
           ) : (
             <div className="divide-y divide-border-light">
@@ -177,10 +177,10 @@ function OutputCard({
             {item.title}
           </button>
           <div className="mt-1 flex items-center gap-1.5">
-            <span className={`rounded-md px-1.5 py-0.5 text-2xs font-medium ${TEMPLATE_COLORS[item.template] ?? ''}`}>
+            <span className={`rounded-md px-1.5 py-0.5 text-xs font-medium ${TEMPLATE_COLORS[item.template] ?? ''}`}>
               {TEMPLATE_LABELS[item.template] ?? item.template}
             </span>
-            <span className="text-2xs text-ink-muted/50">{relativeTime(item.createdAt)}</span>
+            <span className="text-xs text-ink-muted/50">{relativeTime(item.createdAt)}</span>
           </div>
         </div>
 

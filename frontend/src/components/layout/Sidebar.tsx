@@ -20,15 +20,15 @@ export default function Sidebar() {
   const navigate = useNavigate()
 
   return (
-    <aside className="flex w-56 flex-col border-r border-border bg-surface select-none">
+    <aside className="flex w-48 flex-col border-r border-border bg-surface select-none">
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-100 text-accent-600">
-          <GraduationCap size={18} />
+      <div className="flex items-center gap-2 px-4 py-5">
+        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent-100 text-accent-600">
+          <GraduationCap size={16} />
         </div>
-        <div>
-          <h1 className="text-sm font-semibold text-ink tracking-tight">Study Agent</h1>
-          <p className="text-2xs text-ink-muted mt-0.5">AI 学习伴侣</p>
+        <div className="min-w-0">
+          <h1 className="text-sm font-semibold text-ink tracking-tight truncate">Study Agent</h1>
+          <p className="text-xs text-ink-muted mt-0.5">AI 学习伴侣</p>
         </div>
       </div>
 
@@ -42,8 +42,8 @@ export default function Sidebar() {
         />
 
         {/* Section label */}
-        <div className="mt-6 mb-1.5 px-3">
-          <p className="text-2xs font-medium uppercase tracking-wider text-ink-muted/50">
+        <div className="mt-6 mb-1.5 px-2.5">
+          <p className="text-xs font-medium uppercase tracking-wider text-ink-muted/50">
             工具
           </p>
         </div>
@@ -76,8 +76,8 @@ export default function Sidebar() {
       </nav>
 
       {/* Version */}
-      <div className="border-t border-border px-5 py-3">
-        <p className="text-2xs text-ink-muted/40">v0.3.0</p>
+      <div className="border-t border-border px-4 py-3">
+        <p className="text-xs text-ink-muted/40">v0.3.0</p>
       </div>
     </aside>
   )
@@ -100,11 +100,11 @@ function NavItem({
 }) {
   if (!available) {
     return (
-      <button disabled className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-muted/30 cursor-not-allowed mb-0.5 transition-colors">
+      <button disabled className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-ink-muted/30 cursor-not-allowed mb-0.5 transition-colors">
         {icon}
         <span className="flex-1 text-left">{label}</span>
         {badge && (
-          <span className="rounded-md bg-paper-dark px-1.5 py-0.5 text-2xs text-ink-muted/40">
+          <span className="rounded-md bg-paper-dark px-1.5 py-0.5 text-xs text-ink-muted/40">
             {badge}
           </span>
         )}
@@ -115,7 +115,7 @@ function NavItem({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium mb-0.5 transition-all duration-150 ${
+      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium mb-0.5 transition-all duration-150 ${
         active
           ? 'bg-primary-50 text-primary-700'
           : 'text-ink-soft hover:bg-paper-dark hover:text-ink'
@@ -124,7 +124,7 @@ function NavItem({
       {icon}
       <span className="flex-1 text-left">{label}</span>
       {badge && (
-        <span className="rounded-md bg-accent-100 px-1.5 py-0.5 text-2xs text-accent-700">
+        <span className="rounded-md bg-accent-100 px-1.5 py-0.5 text-xs text-accent-700">
           {badge}
         </span>
       )}

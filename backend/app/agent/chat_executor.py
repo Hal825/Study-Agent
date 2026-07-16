@@ -159,6 +159,16 @@ class ChatAgentExecutor:
                         ))
                         return
 
+                    # 分析阶段：每个节点完成后推送进度消息到前端（流式反馈）
+                    progress_msg = _get_progress_message(node_name, state_update)
+                    if progress_msg:
+                        yield _sse(chat_message_event(
+                            session_id,
+                            role="assistant",
+                            message_type="progress",
+                            content=progress_msg,
+                        ))
+
             # 3. 检查图是否中断
             graph_state = self._graph.get_state(config)
             if graph_state.next:
@@ -488,6 +498,25 @@ class ChatAgentExecutor:
 # ============================================================
 # 辅助函数
 # ============================================================
+
+def _get_progress_message(node_name: str, state_update: dict) -> str | None:
+    """根据节点名称返回流式进度消息。"""
+    if not isinstance(state_update, dict):
+        return None
+
+    # 优先使用节点内嵌入的 _progress 消息
+    progress = state_update.get("_progress", "")
+    if progress:
+        return progress
+
+    # 后备消息
+    messages = {
+        "parse": "正在解析内容结构...",
+        "extract": "正在提取核心主题与关键概念...",
+        "structure": "正在分析知识结构与层级关系...",
+    }
+    return messages.get(node_name)
+
 
 def _is_accept_message(message: str) -> bool:
     """判断用户消息是否表示接受/完成。"""

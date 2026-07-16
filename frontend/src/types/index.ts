@@ -86,7 +86,7 @@ export const TOOLS: ToolNavItem[] = [
 // Chat 对话类型
 // ============================================================
 export type MessageRole = 'user' | 'assistant' | 'system'
-export type MessageType = 'text' | 'design_framework' | 'option_cards' | 'markdown_note'
+export type MessageType = 'text' | 'design_framework' | 'option_cards' | 'markdown_note' | 'progress'
 export type ChatPhase = 'idle' | 'analyzing' | 'design' | 'generating' | 'revising' | 'done'
 export type PreviewMode = 'chat' | 'split' | 'preview'
 
@@ -126,6 +126,11 @@ export interface ChatMessage {
   content: string
   data?: DesignFrameworkData | OptionCardsData | null
   timestamp: number
+  // File attachment (for user messages with file upload)
+  fileName?: string
+  fileSize?: number
+  // Thinking process chain (for assistant messages)
+  thinkingSteps?: string[]
 }
 
 export interface SelectionsData {

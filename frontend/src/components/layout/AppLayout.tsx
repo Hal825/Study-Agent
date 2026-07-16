@@ -11,12 +11,12 @@ export default function AppLayout() {
     <div className="flex h-screen overflow-hidden bg-paper">
       <Sidebar />
 
-      <main className="flex-1 overflow-y-auto scrollbar-thin">
+      <main className="flex-1 overflow-y-auto scrollbar-thin bg-paper">
         <Outlet />
       </main>
 
       {/* Toggle button column */}
-      <div className="flex flex-col items-center border-l border-border bg-surface py-3 w-10">
+      <div className="flex flex-col items-center border-l border-border bg-surface/80 py-3 w-11">
         <button
           onClick={() => setOutputOpen(!outputOpen)}
           className={`rounded-lg p-1.5 transition-all ${

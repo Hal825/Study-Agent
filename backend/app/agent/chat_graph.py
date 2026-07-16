@@ -37,30 +37,24 @@ def inject_chat_dependencies(tool_registry, llm_service, prompt_registry) -> Non
 
 
 # ============================================================
-# 节点函数
+# 节点函数 — 拆分为 3 个分析节点，支持流式进度反馈
 # ============================================================
 
-async def analyze_node(state: ChatAgentState) -> dict[str, Any]:
+async def parse_node(state: ChatAgentState) -> dict[str, Any]:
     """
-    节点 1：分析用户上传的内容。
-
-    运行 ContentParser → EntityExtractor → StructureAnalyzer，
-    将所有分析结果写入 state。
+    节点 1a：解析内容结构（ContentParser）。
     """
     session_id = state.get("session_id", "")
-    logger.info(f"[{session_id}] analyze_node 开始")
+    logger.info(f"[{session_id}] parse_node 开始")
 
     content = state.get("content", "")
     if not content.strip():
         return {"phase": "analyzing", "error": "内容为空"}
 
     from app.tools.content_parser import ContentParserInput
-    from app.tools.entity_extractor import EntityExtractorInput
-    from app.tools.structure_analyzer import StructureAnalyzerInput
 
     updates: dict[str, Any] = {"phase": "analyzing"}
 
-    # --- 1. ContentParser ---
     parser = _tool_registry.get("content_parser")
     if parser:
         result = await parser.run(ContentParserInput(content=content, filename=""))
@@ -74,18 +68,41 @@ async def analyze_node(state: ChatAgentState) -> dict[str, Any]:
             ]
             updates["parsed_total_words"] = data.total_words
             updates["parsed_language"] = data.language
+            # 标记解析进度供 executor 读取
+            updates["_progress"] = f"已解析内容结构：{data.total_words} 字，{len(data.sections)} 个章节"
             logger.info(f"[{session_id}] ContentParser 完成: {data.total_words} 字, {data.language}")
         else:
             logger.warning(f"[{session_id}] ContentParser 失败: {result.error}")
     else:
         logger.warning(f"[{session_id}] ContentParser 未注册")
 
-    # --- 2. EntityExtractor ---
+    updates.setdefault("parsed_sections", [])
+    updates.setdefault("parsed_title", "")
+    updates.setdefault("parsed_total_words", 0)
+    updates.setdefault("parsed_language", "zh")
+
+    return updates
+
+
+async def extract_node(state: ChatAgentState) -> dict[str, Any]:
+    """
+    节点 1b：提取知识实体与核心概念（EntityExtractor）。
+    """
+    session_id = state.get("session_id", "")
+    logger.info(f"[{session_id}] extract_node 开始")
+
+    content = state.get("content", "")
+    sections = state.get("parsed_sections", [])
+
+    from app.tools.entity_extractor import EntityExtractorInput
+
+    updates: dict[str, Any] = {"phase": "analyzing"}
+
     extractor = _tool_registry.get("entity_extractor")
     if extractor:
         result = await extractor.run(EntityExtractorInput(
             content=content,
-            sections=updates.get("parsed_sections", []),
+            sections=sections,
             max_entities=20,
         ))
         if result.ok:
@@ -96,19 +113,40 @@ async def analyze_node(state: ChatAgentState) -> dict[str, Any]:
                 for e in data.entities
             ]
             updates["key_concepts"] = data.key_concepts
+            updates["_progress"] = f"已提取 {len(data.entities)} 个核心实体与 {len(data.key_concepts)} 个关键概念"
             logger.info(f"[{session_id}] EntityExtractor 完成: {len(data.entities)} 实体")
         else:
             logger.warning(f"[{session_id}] EntityExtractor 失败: {result.error}")
     else:
         logger.warning(f"[{session_id}] EntityExtractor 未注册")
 
-    # --- 3. StructureAnalyzer ---
+    updates.setdefault("key_concepts", [])
+    updates.setdefault("entities", [])
+
+    return updates
+
+
+async def structure_node(state: ChatAgentState) -> dict[str, Any]:
+    """
+    节点 1c：分析知识结构（StructureAnalyzer）。
+    """
+    session_id = state.get("session_id", "")
+    logger.info(f"[{session_id}] structure_node 开始")
+
+    content = state.get("content", "")
+    sections = state.get("parsed_sections", [])
+    total_words = state.get("parsed_total_words", 0)
+
+    from app.tools.structure_analyzer import StructureAnalyzerInput
+
+    updates: dict[str, Any] = {"phase": "analyzing"}
+
     analyzer = _tool_registry.get("structure_analyzer")
     if analyzer:
         result = await analyzer.run(StructureAnalyzerInput(
             content=content,
-            sections=updates.get("parsed_sections", []),
-            total_words=updates.get("parsed_total_words", 0),
+            sections=sections,
+            total_words=total_words,
         ))
         if result.ok:
             data = result.data
@@ -124,6 +162,7 @@ async def analyze_node(state: ChatAgentState) -> dict[str, Any]:
             ]
             updates["complexity"] = data.complexity
             updates["estimated_study_time_minutes"] = data.estimated_study_time_minutes
+            updates["_progress"] = f"已分析知识结构：{data.content_type}，复杂度 {data.complexity}"
             logger.info(f"[{session_id}] StructureAnalyzer 完成: {data.content_type}")
         else:
             logger.warning(f"[{session_id}] StructureAnalyzer 失败: {result.error}")
@@ -134,10 +173,6 @@ async def analyze_node(state: ChatAgentState) -> dict[str, Any]:
     updates.setdefault("key_concepts", [])
     updates.setdefault("main_topics", [])
     updates.setdefault("suggested_outline", [])
-    updates.setdefault("parsed_sections", [])
-    updates.setdefault("parsed_title", "")
-    updates.setdefault("parsed_total_words", 0)
-    updates.setdefault("parsed_language", "zh")
     updates.setdefault("content_type", "unknown")
     updates.setdefault("complexity", "medium")
     updates.setdefault("estimated_study_time_minutes", 30)
@@ -298,13 +333,13 @@ def build_chat_graph() -> StateGraph:
     """
     构建对话式笔记生成的 LangGraph 状态图。
 
-    图结构：
-        START → analyze → present_design → generate_note → present_result → handle_revision
-                                ↑                ↑              │                  │
-                           [interrupt]           │              │       (revise)   │
-                                                 └──────────────┴──────────────────┘
-                                                                         │ (done)
-                                                                         END
+    图结构（分析拆分为 3 个节点，每个节点完成后推送进度到前端）：
+        START → parse → extract → structure → present_design → generate_note → present_result → handle_revision
+                                                       ↑                ↑              │                  │
+                                                  [interrupt]           │              │       (revise)   │
+                                                                        └──────────────┴──────────────────┘
+                                                                                                │ (done)
+                                                                                                END
 
     Returns:
         已编译的 CompiledStateGraph
@@ -312,15 +347,19 @@ def build_chat_graph() -> StateGraph:
     builder = StateGraph(ChatAgentState)
 
     # 添加节点
-    builder.add_node("analyze", analyze_node)
+    builder.add_node("parse", parse_node)
+    builder.add_node("extract", extract_node)
+    builder.add_node("structure", structure_node)
     builder.add_node("present_design", present_design_node)
     builder.add_node("generate_note", generate_note_node)
     builder.add_node("present_result", present_result_node)
     builder.add_node("handle_revision", handle_revision_node)
 
-    # 连线
-    builder.add_edge(START, "analyze")
-    builder.add_edge("analyze", "present_design")
+    # 连线 — 分析阶段拆分为 3 步
+    builder.add_edge(START, "parse")
+    builder.add_edge("parse", "extract")
+    builder.add_edge("extract", "structure")
+    builder.add_edge("structure", "present_design")
     builder.add_edge("present_design", "generate_note")
     builder.add_edge("generate_note", "present_result")
     builder.add_edge("present_result", "handle_revision")

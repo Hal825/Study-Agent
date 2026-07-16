@@ -20,12 +20,12 @@ export default function NotePreview() {
   return (
     <div className={`flex flex-col border-l border-border bg-surface ${isFullPreview ? 'flex-1' : 'w-1/2'}`}>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
         <div className="flex items-center gap-2">
-          <Eye size={14} className="text-ink-muted" />
-          <span className="text-xs font-medium text-ink-soft">实时预览</span>
+          <Eye size={15} className="text-ink-muted" />
+          <span className="text-sm font-medium text-ink-soft">实时预览</span>
           {isStreaming && (
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-soft" />
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse-soft" />
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -69,7 +69,7 @@ export default function NotePreview() {
           <div className="flex flex-col items-center justify-center h-full text-ink-muted/30">
             <Eye size={32} className="mb-3" />
             <p className="text-xs">笔记预览将在此显示</p>
-            <p className="text-2xs mt-1">生成过程中会实时更新</p>
+            <p className="text-xs mt-1">生成过程中会实时更新</p>
           </div>
         )}
       </div>

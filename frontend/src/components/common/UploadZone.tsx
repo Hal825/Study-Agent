@@ -334,7 +334,7 @@ export default function UploadZone({ value, onChange }: UploadZoneProps) {
                     style={{ width: `${Math.min(sizeRatio * 100, 100)}%` }}
                   />
                 </div>
-                <span className={`text-2xs tabular-nums ${
+                <span className={`text-xs tabular-nums ${
                   sizeRatio > 0.9 ? 'text-red-500 font-medium' : 'text-ink-muted/50'
                 }`}>
                   {formatSize(totalSize)} / {DEFAULT_MAX_TOTAL_MB} MB
@@ -342,7 +342,7 @@ export default function UploadZone({ value, onChange }: UploadZoneProps) {
               </div>
               <button
                 onClick={handleClearAll}
-                className="text-2xs text-ink-muted/30 hover:text-red-500 transition-colors"
+                className="text-xs text-ink-muted/30 hover:text-red-500 transition-colors"
               >
                 全部清除
               </button>
@@ -374,7 +374,7 @@ export default function UploadZone({ value, onChange }: UploadZoneProps) {
                     }`}>
                       {f.name}
                     </p>
-                    <p className="text-2xs text-ink-muted/40">
+                    <p className="text-xs text-ink-muted/40">
                       {formatSize(f.size)}
                       {f.status === 'error' && f.error && (
                         <span className="text-red-400 ml-2">{f.error}</span>
@@ -431,7 +431,7 @@ export default function UploadZone({ value, onChange }: UploadZoneProps) {
           </button>
         </div>
 
-        <p className="mt-3 text-2xs text-ink-muted/40">
+        <p className="mt-3 text-xs text-ink-muted/40">
           支持 {SUPPORTED} 格式 &middot; 总上限 {DEFAULT_MAX_TOTAL_MB} MB
         </p>
 
